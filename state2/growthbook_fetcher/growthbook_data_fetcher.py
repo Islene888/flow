@@ -17,7 +17,7 @@ def fetch_and_save_experiment_data():
 
     # 设置参数，返回多个实验
     params = {
-        'limit': 100,  # 设置返回100个实验
+        'limit': 100,  # 设置返回200个实验
         'offset': 0,
     }
 
@@ -47,11 +47,22 @@ def fetch_and_save_experiment_data():
                 # 获取每个 tag 对应的最后一个实验（根据最后阶段的开始时间排序）
                 for tag, experiments_with_tag in tag_dict.items():
                     # 按照最后阶段的开始时间排序实验，确保取到最近开始的实验
-                    experiments_with_tag.sort(key=lambda x: get_last_phase_start_time(x), reverse=True)
+                    experiments_with_tag.sort(key=lambda x: get_last_phase_start_time(x) or datetime.min, reverse=True)
                     last_experiment = experiments_with_tag[0]  # 获取排序后的最新实验
+
+                    # 先判断最后阶段的开始时间是否存在且是否超过 2 天前
+                    start_time = get_last_phase_start_time(last_experiment)
+                    if not start_time:
+                        print(f"实验 {last_experiment.get('name')} 缺失开始时间，跳过该实验。")
+                        continue
+                    if (datetime.now() - start_time).days < 2:
+                        print(f"实验 {last_experiment.get('name')} 的开始时间不足2天，跳过该实验。")
+                        continue
+
                     experiment_name = last_experiment.get('name')  # 获取实验名称
                     tags = last_experiment.get('tags', [])  # 获取实验标签
-                    tags_str = ', '.join(tags)  # 将 tags 列表转换为字符串
+                    # 将 tags 列表转换为字符串，并替换逗号为空下划线、去除空格
+                    tags_str = ', '.join(tags).replace(',', '_').replace(' ', '')
                     variations = last_experiment.get('variations', [])  # 获取变体信息
                     num_variations = len(variations)  # 变体个数
                     control_group_key = variations[0].get('key') if variations else None  # 获取对照组（key）
@@ -60,22 +71,21 @@ def fetch_and_save_experiment_data():
                     phases = last_experiment.get('phases', [])
                     if phases:
                         last_phase = phases[-1]  # 获取最后一个阶段
-                        start_time = datetime.strptime(last_phase.get('dateStarted'), '%Y-%m-%dT%H:%M:%S.%fZ')  # 阶段开始时间
+                        # 统一时间格式到秒：解析后调用 .replace(microsecond=0)
+                        start_time = datetime.strptime(last_phase.get('dateStarted'), '%Y-%m-%dT%H:%M:%S.%fZ').replace(microsecond=0)
                         end_time_str = last_phase.get('dateEnded')
 
                         if end_time_str:
-                            # 如果结束时间存在，则使用结束时间
-                            end_time = datetime.strptime(end_time_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+                            end_time = datetime.strptime(end_time_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(microsecond=0)
                         else:
-                            # 如果没有结束时间，则使用当前时间
-                            end_time = datetime.now()
+                            end_time = datetime.now().replace(microsecond=0)
 
                         # 计算实验持续时间（天数）
                         duration = (end_time - start_time).days
 
-                        # 如果实验持续时间大于 2 个月（约 60 天），则跳过该实验
-                        if duration > 60:
-                            print(f"实验 {experiment_name} 持续时间超过 2 个月，跳过该实验。")
+                        # 如果实验持续时间大于 3 个月（约 90 天），则跳过该实验
+                        if duration > 90:
+                            print(f"实验 {experiment_name} 持续时间超过 3 个月，跳过该实验。")
                             continue
 
                         # 将数据添加到列表中
@@ -89,9 +99,17 @@ def fetch_and_save_experiment_data():
                         })
                     else:
                         print(f"No phases available for experiment: {experiment_name}")
+                # 去重：使用 (experiment_name, tags) 组合作为唯一标识
+                unique_experiments = {}
+                for exp in experiments_data:
+                    key = (exp["experiment_name"], exp["tags"])
+                    if key not in unique_experiments:
+                        unique_experiments[key] = exp
+
+                deduped_experiments_data = list(unique_experiments.values())
 
                 # 将实验数据封装到 DataFrame 中
-                experiment_df = pd.DataFrame(experiments_data)
+                experiment_df = pd.DataFrame(deduped_experiments_data)
 
                 # 连接到数据库并插入数据
                 try:
@@ -100,7 +118,7 @@ def fetch_and_save_experiment_data():
                     encoded_password = urllib.parse.quote_plus(db_password)
 
                     # 构造数据库连接 URL
-                    DATABASE_URL = f"mysql+pymysql://bigdata:{encoded_password}@18.188.196.105:9030/flow_test"
+                    DATABASE_URL = f"mysql+pymysql://bigdata:{encoded_password}@18.188.196.105:9030/flow_ab_test"
 
                     # 创建数据库连接
                     engine = create_engine(DATABASE_URL)
@@ -117,14 +135,12 @@ def fetch_and_save_experiment_data():
                         ) ENGINE=OLAP;
                     """
 
-                    # 使用 connection 来执行创建表语句
                     with engine.connect() as connection:
-                        connection.execute(text(create_table_sql))  # 使用 text() 将 SQL 包裹起来
-                    print("✅ 表格创建成功！")
+                        connection.execute(text(create_table_sql))
+                    print("✅ 实验数据表格experiment_data 创建成功！")
 
-                    # 将 DataFrame 插入到 tbl_experiment_data 表
-                    experiment_df.to_sql('tbl_experiment_data', con=engine, if_exists='append', index=False, method='multi')
-                    print("✅ 实验数据已成功保存到数据库！")
+                    experiment_df.to_sql('tbl_experiment_data', con=engine, if_exists='replace', index=False, method='multi')
+                    print("✅ 实验数据已成功保存到experiment_data中！")
                 except SQLAlchemyError as e:
                     print(f"Error inserting data: {e}")
                 finally:
@@ -140,14 +156,18 @@ def fetch_and_save_experiment_data():
 
 def get_last_phase_start_time(experiment):
     """
-    获取实验最后一个阶段的开始时间，如果没有开始时间，则返回当前时间。
+    获取实验最后一个阶段的开始时间，如果没有开始时间，则返回 None。
+    统一时间格式为秒（去掉微秒部分）。
     """
     phases = experiment.get('phases', [])
     if phases:
         last_phase = phases[-1]  # 获取最后一个阶段
         start_time_str = last_phase.get('dateStarted')
         if start_time_str:
-            # 如果开始时间存在，则返回开始时间
-            return datetime.strptime(start_time_str, '%Y-%m-%dT%H:%M:%S.%fZ')
-    # 如果没有开始时间，返回当前时间
-    return datetime.now()
+            try:
+                # 解析后统一将微秒设为 0
+                return datetime.strptime(start_time_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(microsecond=0)
+            except ValueError:
+                # 如果解析失败，则返回 None
+                return None
+    return None

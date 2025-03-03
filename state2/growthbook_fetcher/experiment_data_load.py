@@ -5,7 +5,7 @@ def get_experiment_details_by_tag(tag):
     try:
         # 连接数据库
         password = urllib.parse.quote_plus("flowgpt@2024.com")
-        DATABASE_URL = f"mysql+pymysql://bigdata:{password}@18.188.196.105:9030/flow_test"
+        DATABASE_URL = f"mysql+pymysql://bigdata:{password}@18.188.196.105:9030/flow_ab_test"
         engine = create_engine(DATABASE_URL)
 
         # 创建 SQL 查询语句并使用 text() 包裹，获取额外字段

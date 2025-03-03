@@ -1,4 +1,9 @@
-# 导入相关模块和函数
+import warnings
+from urllib3.exceptions import NotOpenSSLWarning
+warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+import warnings
+from sqlalchemy.exc import SAWarning
+warnings.filterwarnings("ignore", category=SAWarning)
 from state2.growthbook_fetcher.experiment_data_load import get_experiment_details_by_tag
 from state2.retention import retention_report_table_ETL
 from state2.retention.retention_wide_table_ETL import insert_experiment_data_to_wide_table

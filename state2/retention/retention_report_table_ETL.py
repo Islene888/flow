@@ -1,5 +1,5 @@
 # retention_analysis.py
-
+import sys
 import urllib.parse
 from sqlalchemy import create_engine, text
 import pandas as pd
@@ -10,13 +10,14 @@ from sqlalchemy.exc import SQLAlchemyError
 # 设置数据库连接
 def get_db_connection():
     password = urllib.parse.quote_plus("flowgpt@2024.com")
-    DATABASE_URL = f"mysql+pymysql://bigdata:{password}@18.188.196.105:9030/flow_test"
+    DATABASE_URL = f"mysql+pymysql://bigdata:{password}@18.188.196.105:9030/flow_ab_test"
     engine = create_engine(DATABASE_URL)
     return engine
 
 
 # 运行 SQL 查询，获取数据
 def extract_data_from_db(tag, engine):
+
     query = f"""
     SELECT * FROM tbl_wide_user_retention_{tag}
     ORDER BY dt ASC, CAST(variation AS UNSIGNED) ASC;
@@ -28,7 +29,6 @@ def extract_data_from_db(tag, engine):
     except Exception as e:
         print(f"🚨 数据提取失败: {e}")
         return None
-
 
 # 计算留存率
 def calculate_retention(df):
@@ -151,7 +151,7 @@ def create_report_table(engine, tag):
     try:
         with engine.connect() as conn:
             conn.execute(text(create_table_query))
-        print(f"✅ 宽表数据库表格 {table_name2} 已成功创建！")
+        print(f"✅ report表 {table_name2} 已成功创建！")
     except SQLAlchemyError as e:
         print(f"🚨 宽表数据库表格创建失败: {e}")
 
@@ -167,7 +167,7 @@ def load_analysis_results(final_df, engine, table_name2):
             method='multi',  # 批量插入提升性能
             chunksize=500  # 根据需要调整批次大小
         )
-        print("✅ 数据已成功插入到数据库！")
+        print(f"✅ report表数据已成功写入 {table_name2} 中！")
     except SQLAlchemyError as e:
         print(f"🚨 数据库插入失败: {e}")
 
@@ -196,10 +196,17 @@ def main(tag):
     control_df = result_df[result_df["variation"] == "0"]
     baseline_retention_rate = control_df[["dt", "day", "retention_rate"]].drop_duplicates()
 
+
+    if comparison_df.empty:
+        print("⚠️ 警告：计算出的 comparison_df 为空，请检查原始数据中是否存在对照组 (variation == '0') 的数据。")
+        # 根据业务需求，可以选择直接使用 result_df 或者构造一个空的 comparison_df
+        # 这里我们构造一个具有相同列的空 DataFrame
+        comparison_df = pd.DataFrame(columns=["dt", "day", "variation", "control_rate", "exp_rate",
+                                              "uplift", "uplift_ci_lower", "uplift_ci_upper", "z_score", "p_value"])
+
     # 合并 baseline_retention_rate 到原始结果中
     final_df = pd.merge(result_df, comparison_df, on=["dt", "day", "variation"], how="left")
     final_df = pd.merge(final_df, baseline_retention_rate, on=["dt", "day"], how="left", suffixes=("", "_baseline"))
 
     # 插入分析结果到数据库
     load_analysis_results(final_df, engine, table_name2)
-
