@@ -34,6 +34,6 @@ Processing tag: mobie
 * 全部脚本的实验参数已经抽象化，可以适用于任何实验。
 * 添加job function 定时功能，可以实现实时计算展示效果。
 * 根据tag（growthbook上的配置参数，可手动选择，对应不同团队：产品、前后端、推荐）调取实验参数，
-* 经过定时的脚本运算后，可以在Metabase(任何BI平台），自动更新dashboard数据结果。
+* 经过定时的脚本运算后，可以在Metabase(任何BI平台），自动更新dashboard数据结果（以tag即业务组为口径，不以实验为口径）。
 
 
