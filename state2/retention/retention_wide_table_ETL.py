@@ -1,7 +1,7 @@
 import urllib.parse
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
-from state2.growthbook_fetcher.experiment_data_load import get_experiment_details_by_tag
+from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 def insert_experiment_data_to_wide_table(tag):
     try:

@@ -99,6 +99,15 @@ def fetch_and_save_experiment_data():
                         })
                     else:
                         print(f"No phases available for experiment: {experiment_name}")
+
+                experiments_data.append({
+                    "experiment_name": "mobile-non-claude-11",
+                    "tags": "tag_test",
+                    "phase_start_time": datetime(2024, 12, 17, 12, 0, 0),
+                    "phase_end_time": datetime(2025, 1, 2, 12, 0, 0),
+                    "number_of_variations": 7,
+                    "control_group_key": 0
+                })
                 # 去重：使用 (experiment_name, tags) 组合作为唯一标识
                 unique_experiments = {}
                 for exp in experiments_data:
