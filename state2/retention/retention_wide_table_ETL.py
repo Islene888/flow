@@ -38,23 +38,12 @@ def insert_experiment_data_to_wide_table(tag):
         CREATE TABLE IF NOT EXISTS {table_name1} (
             dt DATE,
             variation VARCHAR(255),
-            users INT,
+            new_users INT,
             d1 INT,
-            d2 INT,
             d3 INT,
-            d4 INT,
-            d5 INT,
-            d6 INT,
             d7 INT,
-            d8 INT,
-            d9 INT,
-            d10 INT,
-            d11 INT,
-            d12 INT,
-            d13 INT,
-            d14 INT,
             d15 INT,
-            d16 INT
+            total_assigned INT
         );
         """
 
@@ -94,76 +83,65 @@ def insert_experiment_data_to_wide_table(tag):
         except SQLAlchemyError as e:
             print(f"🚨 宽表数据库表格创建失败: {e}")
 
-        # 执行插入查询（修正）- 动态插入 experiment_name
+        # 构建插入查询，通过 LEFT JOIN 子查询 ta 获取每个日期、variation 的 total_assigned
         insert_query = f"""            
-            INSERT OVERWRITE  {table_name1} (dt, variation, users, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14, d15, d16)
-            SELECT 
-                u.first_visit_date AS dt, 
-                e.variation, 
-                COUNT(DISTINCT u.user_id) AS users,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 1 DAY) THEN a.user_id END) AS d1,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 2 DAY) THEN a.user_id END) AS d2,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 3 DAY) THEN a.user_id END) AS d3,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 4 DAY) THEN a.user_id END) AS d4,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 5 DAY) THEN a.user_id END) AS d5,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 6 DAY) THEN a.user_id END) AS d6,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 7 DAY) THEN a.user_id END) AS d7,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 8 DAY) THEN a.user_id END) AS d8,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 9 DAY) THEN a.user_id END) AS d9,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 10 DAY) THEN a.user_id END) AS d10,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 11 DAY) THEN a.user_id END) AS d11,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 12 DAY) THEN a.user_id END) AS d12,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 13 DAY) THEN a.user_id END) AS d13,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 14 DAY) THEN a.user_id END) AS d14,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 15 DAY) THEN a.user_id END) AS d15,
-                COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 16 DAY) THEN a.user_id END) AS d16
-            FROM (
-                -- 严格新用户定义
-                SELECT 
-                    user_id,
-                    DATE(first_visit_date) AS first_visit_date
-                FROM
-                    flow_wide_info.tbl_wide_user_first_visit_app_info
-                WHERE
-                    first_visit_date BETWEEN '{formatted_start_time}' AND '{formatted_end_time}'
-            ) u
-            LEFT JOIN (
-                -- 用户活跃行为（满足会话时长条件）
-                SELECT
-                    e.user_id,
-                    DATE(FROM_UNIXTIME(e.ingest_timestamp / 1000, '%Y-%m-%d')) AS active_date
-                FROM
-                    flowgpt.tbl_event_app e
-                INNER JOIN flowgpt.tbl_parameter_app p 
-                    ON p.event_id = e.event_id
-                    AND p.event_name = '_app_start'
-                    AND p.event_param_key = '_session_duration'
-                WHERE
-                    e.event_name = '_app_start'
-                    AND e.user_id IS NOT NULL
-                    AND e.user_id != ''
-                    AND p.event_param_value >= 10000
-                    AND DATE(FROM_UNIXTIME(e.ingest_timestamp / 1000)) BETWEEN '{formatted_start_time}' AND '{formatted_end_time}'
-            ) a ON u.user_id = a.user_id
-            LEFT JOIN (
-                -- 动态获取实验分组（不限定variation）
-                SELECT
-                    user_id,
-                    CAST(variation_id AS CHAR) AS variation
-                FROM
-                    flow_wide_info.tbl_wide_experiment_assignment_hi
-                WHERE
-                    experiment_id = '{experiment_name}'
-                    AND timestamp_assigned BETWEEN '{start_time}' AND '{end_time}'
-            ) e ON u.user_id = e.user_id
-            -- 排除未分组用户
-            WHERE e.variation IS NOT NULL
-            GROUP BY
-                u.first_visit_date, 
-                e.variation
-            ORDER BY 
-                u.first_visit_date,
-                e.variation;
+            INSERT OVERWRITE {table_name1} (dt, variation, new_users, d1, d3, d7, d15, total_assigned)
+SELECT
+    /*+ SET_VAR (query_timeout = 30000) */ 
+    u.first_visit_date AS dt, 
+    e.variation, 
+    COUNT(DISTINCT u.user_id) AS new_users,
+    COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, u.first_visit_date) = 1 THEN a.user_id END) AS d1,
+    COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, u.first_visit_date) = 3 THEN a.user_id END) AS d3,
+    COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, u.first_visit_date) = 7 THEN a.user_id END) AS d7,
+    COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, u.first_visit_date) = 15 THEN a.user_id END) AS d15,
+    MAX(COALESCE(ta.total_assigned, 0)) AS total_assigned
+FROM (
+    -- 严格新用户定义：筛选指定日期区间内首次访问的用户
+    SELECT 
+        user_id,
+        DATE(first_visit_date) AS first_visit_date
+    FROM flow_wide_info.tbl_wide_user_first_visit_app_info
+    WHERE first_visit_date BETWEEN '{formatted_start_time}' AND '{formatted_end_time}'
+) u
+LEFT JOIN (
+    -- 活跃用户：使用 tbl_wide_active_user_app_info 表，keep_alive_flag = 1 的数据
+    SELECT
+        d.user_id,
+        d.active_date
+    FROM flow_wide_info.tbl_wide_active_user_app_info d
+    WHERE
+        d.active_date BETWEEN '{start_time}' AND '{end_time}'
+        AND d.keep_alive_flag = 1
+        AND d.user_id IS NOT NULL
+        AND d.user_id != ''
+    GROUP BY d.active_date, d.user_id
+) a ON u.user_id = a.user_id
+LEFT JOIN (
+    -- 实验分组信息：获取指定实验的分组信息
+    SELECT
+        user_id,
+        CAST(variation_id AS CHAR) AS variation
+    FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+    WHERE
+        experiment_id = '{experiment_name}'
+        AND timestamp_assigned BETWEEN '{start_time}' AND '{end_time}'
+) e ON u.user_id = e.user_id
+LEFT JOIN (
+    -- 统计每天、每个 variation 被分配的用户数量
+    SELECT 
+        DATE(timestamp_assigned) AS assign_date,
+        CAST(variation_id AS CHAR) AS variation,
+        COUNT(DISTINCT user_id) AS total_assigned
+    FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+    WHERE experiment_id = '{experiment_name}'
+    GROUP BY DATE(timestamp_assigned), CAST(variation_id AS CHAR)
+) ta ON ta.assign_date = u.first_visit_date AND ta.variation = e.variation
+-- 排除未分组用户
+WHERE e.variation IS NOT NULL
+GROUP BY u.first_visit_date, e.variation
+ORDER BY u.first_visit_date, e.variation;
+
         """
 
         # 执行查询并插入数据

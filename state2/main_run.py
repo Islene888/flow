@@ -15,17 +15,17 @@ from state2.growthbook_fetcher.experiment_all_tags import get_all_tags_from_db
 
 
 # 1.获取并保存 GrowthBook 实验数据
-fetch_and_save_experiment_data()
+# fetch_and_save_experiment_data()
 
-tag = 'chat_0303'  # 定义实验标签
+tag = 'backend'  # 定义实验标签
 # tag = 'web'  # 定义实验标签
 
-
+# test.main(tag)
 # 根据标签获取实验详细信息
-get_experiment_details_by_tag(tag)
+# get_experiment_details_by_tag(tag)
 
 # 将实验数据插入宽表
-insert_experiment_data_to_wide_table(tag)
+# insert_experiment_data_to_wide_table(tag)
 
 # 生成并保存留存报告
 retention_report_table_ETL.main(tag)
