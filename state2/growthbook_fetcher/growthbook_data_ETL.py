@@ -108,6 +108,14 @@ def fetch_and_save_experiment_data():
                     "number_of_variations": 7,
                     "control_group_key": 0
                 })
+                experiments_data.append({
+                    "experiment_name": "mobile-chat-vanilla-0303",
+                    "tags": "chat_0303",
+                    "phase_start_time": datetime(2025,3,3,8,13,24),
+                    "phase_end_time": datetime(2025,3,5,22,49,45),
+                    "number_of_variations": 7,
+                    "control_group_key": 0
+                })
                 # 去重：使用 (experiment_name, tags) 组合作为唯一标识
                 unique_experiments = {}
                 for exp in experiments_data:
@@ -127,7 +135,7 @@ def fetch_and_save_experiment_data():
                     encoded_password = urllib.parse.quote_plus(db_password)
 
                     # 构造数据库连接 URL
-                    DATABASE_URL = f"mysql+pymysql://bigdata:{encoded_password}@18.188.196.105:9030/flow_ab_test"
+                    DATABASE_URL = f"mysql+pymysql://bigdata:{encoded_password}@3.135.224.186:9030/flow_ab_test?charset=utf8mb4"
 
                     # 创建数据库连接
                     engine = create_engine(DATABASE_URL)

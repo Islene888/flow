@@ -25,7 +25,7 @@ def insert_experiment_data_to_wide_table(tag):
         password = urllib.parse.quote_plus("flowgpt@2024.com")
 
         # 构造数据库连接 URL
-        DATABASE_URL = f"mysql+pymysql://bigdata:{password}@18.188.196.105:9030/flow_ab_test"
+        DATABASE_URL = f"mysql+pymysql://bigdata:{password}@3.135.224.186:9030/flow_ab_test?charset=utf8mb4"
 
         # 创建数据库连接
         engine = create_engine(DATABASE_URL)
@@ -95,8 +95,8 @@ def insert_experiment_data_to_wide_table(tag):
             print(f"🚨 宽表数据库表格创建失败: {e}")
 
         # 执行插入查询（修正）- 动态插入 experiment_name
-        insert_query = f"""
-                    INSERT INTO {table_name1} (dt, variation, users, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14, d15, d16)
+        insert_query = f"""            
+            INSERT OVERWRITE  {table_name1} (dt, variation, users, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14, d15, d16)
             SELECT 
                 u.first_visit_date AS dt, 
                 e.variation, 
@@ -117,43 +117,53 @@ def insert_experiment_data_to_wide_table(tag):
                 COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 14 DAY) THEN a.user_id END) AS d14,
                 COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 15 DAY) THEN a.user_id END) AS d15,
                 COUNT(DISTINCT CASE WHEN a.active_date >= DATE_ADD(u.first_visit_date, INTERVAL 16 DAY) THEN a.user_id END) AS d16
-            FROM
-                (SELECT
+            FROM (
+                -- 严格新用户定义
+                SELECT 
                     user_id,
                     DATE(first_visit_date) AS first_visit_date
                 FROM
                     flow_wide_info.tbl_wide_user_first_visit_app_info
                 WHERE
-                    first_visit_date BETWEEN '{formatted_start_time}' AND '{formatted_end_time}') u
-            LEFT JOIN
-                (SELECT
-                    u.user_id,
-                    u.first_visit_date,
-                    DATE(FROM_UNIXTIME(a.ingest_timestamp / 1000, '%Y-%m-%d')) AS active_date
+                    first_visit_date BETWEEN '{formatted_start_time}' AND '{formatted_end_time}'
+            ) u
+            LEFT JOIN (
+                -- 用户活跃行为（满足会话时长条件）
+                SELECT
+                    e.user_id,
+                    DATE(FROM_UNIXTIME(e.ingest_timestamp / 1000, '%Y-%m-%d')) AS active_date
                 FROM
-                    flow_wide_info.tbl_wide_user_first_visit_app_info u
-                JOIN
-                    flow_wide_info.tbl_wide_backend_detail_hi a ON u.user_id = a.user_id
+                    flowgpt.tbl_event_app e
+                INNER JOIN flowgpt.tbl_parameter_app p 
+                    ON p.event_id = e.event_id
+                    AND p.event_name = '_app_start'
+                    AND p.event_param_key = '_session_duration'
                 WHERE
-                    a.event_name = 'Chat_LLM'
-                    AND a.device_type = 'MOBILE'
-                    AND DATE(FROM_UNIXTIME(a.ingest_timestamp / 1000, '%Y-%m-%d')) BETWEEN u.first_visit_date AND '{formatted_end_time}') a
-            ON u.user_id = a.user_id
-            LEFT JOIN
-                (SELECT
+                    e.event_name = '_app_start'
+                    AND e.user_id IS NOT NULL
+                    AND e.user_id != ''
+                    AND p.event_param_value >= 10000
+                    AND DATE(FROM_UNIXTIME(e.ingest_timestamp / 1000)) BETWEEN '{formatted_start_time}' AND '{formatted_end_time}'
+            ) a ON u.user_id = a.user_id
+            LEFT JOIN (
+                -- 动态获取实验分组（不限定variation）
+                SELECT
                     user_id,
                     CAST(variation_id AS CHAR) AS variation
                 FROM
                     flow_wide_info.tbl_wide_experiment_assignment_hi
                 WHERE
                     experiment_id = '{experiment_name}'
-                    AND timestamp_assigned BETWEEN '{start_time}' AND '{end_time}') e
-            ON u.user_id = e.user_id
+                    AND timestamp_assigned BETWEEN '{start_time}' AND '{end_time}'
+            ) e ON u.user_id = e.user_id
+            -- 排除未分组用户
+            WHERE e.variation IS NOT NULL
             GROUP BY
-                u.first_visit_date, e.variation
+                u.first_visit_date, 
+                e.variation
             ORDER BY 
-                u.first_visit_date;
-
+                u.first_visit_date,
+                e.variation;
         """
 
         # 执行查询并插入数据

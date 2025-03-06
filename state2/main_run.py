@@ -1,4 +1,11 @@
-# 导入相关模块和函数
+import warnings
+from urllib3.exceptions import NotOpenSSLWarning
+warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+import warnings
+from sqlalchemy.exc import SAWarning
+warnings.filterwarnings("ignore", category=SAWarning)
+
+from state2.retention import test
 from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 from state2.retention import retention_report_table_ETL
 from state2.retention.retention_wide_table_ETL import insert_experiment_data_to_wide_table
@@ -10,7 +17,7 @@ from state2.growthbook_fetcher.experiment_all_tags import get_all_tags_from_db
 # 1.获取并保存 GrowthBook 实验数据
 fetch_and_save_experiment_data()
 
-tag = 'tag_test'  # 定义实验标签
+tag = 'chat_0303'  # 定义实验标签
 # tag = 'web'  # 定义实验标签
 
 
@@ -22,6 +29,7 @@ insert_experiment_data_to_wide_table(tag)
 
 # 生成并保存留存报告
 retention_report_table_ETL.main(tag)
+
 
 
 

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
-    <data-source source="LOCAL" name="star" uuid="8fe86471-fd79-463c-b780-9a0d51543e5c">
+    <data-source source="LOCAL" name="flowgpt" uuid="c76a7a91-ad58-4cea-8b12-2bd9606379b7">
       <driver-ref>mysql</driver-ref>
       <synchronize>true</synchronize>
       <jdbc-driver>com.mysql.jdbc.Driver</jdbc-driver>
-      <jdbc-url>jdbc:mysql://18.188.196.105:9030</jdbc-url>
+      <jdbc-url>jdbc:mysql://3.135.224.186:9030</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
   </component>

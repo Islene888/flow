@@ -1,4 +1,5 @@
 import pandas as pd
+from numpy.distutils.system_info import numarray_info
 from sqlalchemy import create_engine, text
 import urllib.parse
 
@@ -8,20 +9,17 @@ def get_all_tags_from_db():
     """
     try:
         # 数据库用户名、密码和主机
-        db_user = "bigdata"
+
         db_password = "flowgpt@2024.com"
-        db_host = "18.188.196.105"
-        db_port = "9030"
-        db_name = "flow_ab_test"
 
         # 使用 urllib 对密码进行编码
         encoded_password = urllib.parse.quote_plus(db_password)
 
         # 正确格式化数据库 URL
-        db_url = f"mysql+pymysql://{db_user}:{encoded_password}@{db_host}:{db_port}/{db_name}"
+        DATABASE_URL = f"mysql+pymysql://bigdata:{encoded_password}@3.135.224.186:9030/flow_ab_test?charset=utf8mb4"
 
         # 创建数据库引擎
-        engine = create_engine(db_url)
+        engine = create_engine(DATABASE_URL)
 
         # 查询数据
         query = "SELECT tags,experiment_name FROM tbl_experiment_data"
@@ -48,3 +46,20 @@ def get_all_tags_from_db():
         return []
     finally:
         engine.dispose()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
