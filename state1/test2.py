@@ -264,7 +264,7 @@ def main():
             # ✅ 计算基础指标
             result_df = calculate_retention_stats(df, experiment_days)
             if result_df.empty:
-                logger.warning(f"No retention data for {experiment_id}")
+                logger.warning(f"No Retention data for {experiment_id}")
                 continue
 
             # ✅ 分割对照组/实验组
