@@ -3,7 +3,7 @@ from state2.Engagement.Events import (
     Chat,
     Continue,
     Follow,
-    Conversation,
+    New_Conversation,
     Message,
     Regen,
     Time_spent,
@@ -27,7 +27,7 @@ def main(tag):
 
     events = [
         # ("Chat", Chat.main),
-        ("Conversation", Conversation.main),
+        ("Conversation", New_Conversation.main),
         ("Message", Message.main),
         ("Regen", Regen.main),
         ("TimeSpent", Time_spent.main),

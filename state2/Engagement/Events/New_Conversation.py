@@ -52,26 +52,28 @@ def insert_new_conversation_data(tag):
         conn.execute(text(truncate_query))
         print(f"目标表 {table_name} 数据已清空。")
 
+        # 分片插入：这里对每个分片 MOD(crc32(c.user_id), 100) = {mod_value} 进行批量插入
         for mod_value in range(100):
             batch_insert_query = f"""
             INSERT INTO {table_name} (variation, total_new_conversation, unique_new_conversation_users, new_conversation_ratio, experiment_name)
             SELECT /*+ SET_VAR(query_timeout = 30000) */
                 a.variation_id AS variation,
-                COUNT(DISTINCT c.event_id) AS total_new_conversation,
+                COUNT(DISTINCT c.conversation_id) AS total_new_conversation,
                 COUNT(DISTINCT c.user_id) AS unique_new_conversation_users,
-                ROUND(COUNT(DISTINCT c.event_id) * 1.0 / COUNT(DISTINCT c.user_id), 4) AS new_conversation_ratio,
-                '{experiment_name}' as experiment_name
+                ROUND(COUNT(DISTINCT c.conversation_id) * 1.0 / COUNT(DISTINCT c.user_id), 4) AS new_conversation_ratio,
+                '{experiment_name}' AS experiment_name
             FROM flow_event_info.tbl_app_event_chat_send c
             JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
                 ON c.user_id = a.user_id
             WHERE a.experiment_id = '{experiment_name}'
               AND c.ingest_timestamp BETWEEN '{start_time}' AND '{end_time}'
               AND c.conversation_length = 1
+              AND c.conversation_id IS NOT NULL
               AND MOD(crc32(c.user_id), 100) = {mod_value}
             GROUP BY a.variation_id;
             """
             conn.execute(text(batch_insert_query))
-            print(f"批次插入完成，分片条件：MOD(c.user_id, 100) = {mod_value}")
+            print(f"批次插入完成，分片条件：MOD(crc32(c.user_id), 100) = {mod_value}")
 
     print(f"所有批次数据插入完成，目标表：{table_name}")
     return table_name
