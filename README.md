@@ -30,7 +30,7 @@ state3/
 ```
 - **growthbook_fetcher/**：从 GrowthBook 获取实验数据的脚本。  
 - **Business/Retention/Subscribe/...**：按业务场景或团队区分的处理脚本。  
-- **main_all.py**：可一键执行完整 ETL 流程（数据采集、宽表构建、报告生成）。  
+- **main_all.py**：可一键执行完整 ETL 流程（数据采集、宽表构建、报告生成），遍历所有tag（即每个业务现执行一个实验数据）。  
 - **main_run.py**：示例脚本，可指定特定 `tag` 进行测试或局部执行。
 
 
