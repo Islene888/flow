@@ -31,8 +31,8 @@ def insert_experiment_data_to_wide_table(tag):
         engine = create_engine(DATABASE_URL)
 
         # 使用 f-string 动态构建表名
-        table_name1 = f"tbl_wide_user_retention_{tag}"  # 生成表名
-        table_name2 = f"tbl_report_user_retention_{tag}"  # 生成表名
+        table_name1 = f"tbl_wide_user_retention_{tag}"  # 生成宽表表名
+        table_name2 = f"tbl_report_user_retention_{tag}"  # 生成报告表表名
 
         create_table_query1 = f"""
         CREATE TABLE IF NOT EXISTS {table_name1} (
@@ -83,9 +83,20 @@ def insert_experiment_data_to_wide_table(tag):
         except SQLAlchemyError as e:
             print(f"🚨 宽表数据库表格创建失败: {e}")
 
-        # 构建插入查询，通过 LEFT JOIN 子查询 ta 获取每个日期、variation 的 total_assigned
-        insert_query = f"""            
-            INSERT OVERWRITE {table_name1} (dt, variation, new_users, d1, d3, d7, d15, total_assigned)
+        # 先清空原有数据
+        truncate_query = f"TRUNCATE TABLE {table_name1};"
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(truncate_query))
+            print(f"✅ 表 {table_name1} 已成功清空原有数据！")
+        except SQLAlchemyError as e:
+            print(f"🚨 清空数据失败: {e}")
+
+        # 使用 CRC32 函数将 user_id 转为数字，利用 MOD 方法分批执行插入
+        batch_count = 10  # 分为10批，可根据数据量调整
+        for i in range(batch_count):
+            insert_query = f"""            
+                INSERT INTO {table_name1} (dt, variation, new_users, d1, d3, d7, d15, total_assigned)
 SELECT
     /*+ SET_VAR (query_timeout = 30000) */ 
     u.first_visit_date AS dt, 
@@ -137,20 +148,23 @@ LEFT JOIN (
     WHERE experiment_id = '{experiment_name}'
     GROUP BY DATE(timestamp_assigned), CAST(variation_id AS CHAR)
 ) ta ON ta.assign_date = u.first_visit_date AND ta.variation = e.variation
--- 排除未分组用户
+-- 排除未分组用户，并且利用 CRC32 对 u.user_id 分批
 WHERE e.variation IS NOT NULL
+  AND MOD(CRC32(u.user_id), {batch_count}) = {i}
 GROUP BY u.first_visit_date, e.variation
 ORDER BY u.first_visit_date, e.variation;
-
-        """
-
-        # 执行查询并插入数据
-        try:
-            with engine.connect() as conn:
-                conn.execute(text(insert_query))  # 直接执行一次插入
-            print(f"✅ 宽表数据已成功写入 {table_name1} 中！")
-        except SQLAlchemyError as e:
-            print(f"🚨 宽表数据插入失败: {e}")
+            """
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text(insert_query))
+                print(f"✅ 分批 {i+1}/{batch_count} 数据已成功写入 {table_name1} 中！")
+            except SQLAlchemyError as e:
+                print(f"🚨 分批 {i+1}/{batch_count} 数据插入失败: {e}")
 
     except Exception as e:
         print(f"🚨 执行失败: {e}")
+
+# 如果需要运行，可调用函数，例如：
+if __name__ == "__main__":
+    tag = "backend"  # 根据实际标签修改
+    insert_experiment_data_to_wide_table(tag)

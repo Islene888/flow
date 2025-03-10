@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="BigDataIdeConnectionSettings">
+    <option name="connections">
+      <list>
+        <ExtendedConnectionData>
+          <option name="extended">
+            <map>
+              <entry key="customSftpCommand" value="rO0ABXQAAA==" />
+              <entry key="customSudoCommand" value="rO0ABXQABHN1ZG8=" />
+              <entry key="detectedSftpCommand" value="rO0ABXQAJzzov5DooYwgJ1Rlc3QgQ29ubmVjdGlvbicg6L+b6KGM5qOA5rWLPg==" />
+              <entry key="homePath" value="rO0ABXQAAS8=" />
+              <entry key="sshId" value="rO0ABXQAJDI1YzQwODZmLWVhYjktNDFmYi04Y2I5LTcwZDM4YzkwMmFlYg==" />
+              <entry key="suggestSudo" value="rO0ABXNyABFqYXZhLmxhbmcuQm9vbGVhbs0gcoDVnPruAgABWgAFdmFsdWV4cAE=" />
+              <entry key="useCustomCommands" value="rO0ABXNyABFqYXZhLmxhbmcuQm9vbGVhbs0gcoDVnPruAgABWgAFdmFsdWV4cAA=" />
+              <entry key="useSshPasswordForSudo" value="rO0ABXNyABFqYXZhLmxhbmcuQm9vbGVhbs0gcoDVnPruAgABWgAFdmFsdWV4cAE=" />
+              <entry key="useSudo" value="rO0ABXNyABFqYXZhLmxhbmcuQm9vbGVhbs0gcoDVnPruAgABWgAFdmFsdWV4cAE=" />
+            </map>
+          </option>
+          <option name="fqn" value="com.jetbrains.bigdatatools.sftp.settings.SftpConnectionData" />
+          <option name="groupId" value="SftpConnections" />
+          <option name="innerId" value="SFTP@SftpConnections@109763726748690971" />
+          <option name="name" value="SFTP" />
+          <option name="perProject" value="true" />
+        </ExtendedConnectionData>
+      </list>
+    </option>
+  </component>
+</project>
