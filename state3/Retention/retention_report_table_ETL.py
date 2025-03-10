@@ -121,7 +121,11 @@ def generate_report(tag):
 
     # —— 实验组数据（variation ≠ "0"） ——
     # 1. 将实验组各天留存率 pivot 成宽格式（不包含人数），便于展示 d1, d3, d7, d15 的留存率
-    exp_ret_pivot = retention_df[retention_df["variation"] != "0"].pivot(index=["dt", "variation"], columns="day", values="retention_rate").reset_index()
+    exp_ret_pivot = retention_df[retention_df["variation"] != "0"].pivot(
+        index=["dt", "variation"],
+        columns="day",
+        values="retention_rate"
+    ).reset_index()
     exp_ret_pivot = exp_ret_pivot.rename(columns={
         1: "d1留存率",
         3: "d3留存率",
