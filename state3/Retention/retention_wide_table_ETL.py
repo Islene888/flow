@@ -17,7 +17,7 @@ def insert_experiment_data_to_wide_table(tag):
         variations = experiment_data['number_of_variations']
         control_group_key = experiment_data['control_group_key']
 
-        # 时间数据格式化
+        # 时间数据提取
         formatted_start_time = start_time.strftime('%Y-%m-%d')
         formatted_end_time = end_time.strftime('%Y-%m-%d')
 
@@ -30,13 +30,12 @@ def insert_experiment_data_to_wide_table(tag):
         # 创建数据库连接
         engine = create_engine(DATABASE_URL)
 
-        # 动态构建表名（原表，用于分批数据插入及后续聚合覆盖）
-        table_name = f"tbl_wide_user_retention_{tag}"  # 宽表表名
-        report_table_name = f"tbl_report_user_retention_{tag}"  # 报告表表名
+        # 使用 f-string 动态构建表名
+        table_name1 = f"tbl_wide_user_retention_{tag}"  # 生成宽表表名
+        table_name2 = f"tbl_report_user_retention_{tag}"  # 生成报告表表名
 
-        # 创建宽表和报告表（如果不存在）
-        create_table_query = f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        create_table_query1 = f"""
+        CREATE TABLE IF NOT EXISTS {table_name1} (
             dt DATE,
             variation VARCHAR(255),
             new_users INT,
@@ -48,8 +47,8 @@ def insert_experiment_data_to_wide_table(tag):
         );
         """
 
-        create_report_table_query = f"""
-        CREATE TABLE IF NOT EXISTS {report_table_name} (
+        create_table_query2 = f"""
+        CREATE TABLE IF NOT EXISTS {table_name2} (
             dt DATE,
             day INT,
             variation VARCHAR(255),
@@ -68,35 +67,36 @@ def insert_experiment_data_to_wide_table(tag):
             retention_rate_baseline DOUBLE
         );
         """
-        # 创建宽表
+        # 执行查询并创建表1
         try:
             with engine.connect() as conn:
-                conn.execute(text(create_table_query))
-            print(f"✅ 宽表 {table_name} 已成功创建！")
+                conn.execute(text(create_table_query1))
+            print(f"✅ 宽表 {table_name1} 已成功创建！")
         except SQLAlchemyError as e:
             print(f"🚨 宽表数据库表格创建失败: {e}")
 
-        # 创建报告表
+        # 执行查询并创建表2
         try:
             with engine.connect() as conn:
-                conn.execute(text(create_report_table_query))
-            print(f"✅ 报告表 {report_table_name} 已成功创建！")
+                conn.execute(text(create_table_query2))
+            print(f"✅ 宽表 {table_name2} 已成功创建！")
         except SQLAlchemyError as e:
-            print(f"🚨 报告表数据库表格创建失败: {e}")
+            print(f"🚨 宽表数据库表格创建失败: {e}")
 
-        # 清空宽表中原有数据（分批数据）
+        # 先清空原有数据
+        truncate_query = f"TRUNCATE TABLE {table_name1};"
         try:
             with engine.connect() as conn:
-                conn.execute(text(f"TRUNCATE TABLE {table_name};"))
-            print(f"✅ 表 {table_name} 已成功清空原有数据！")
+                conn.execute(text(truncate_query))
+            print(f"✅ 表 {table_name1} 已成功清空原有数据！")
         except SQLAlchemyError as e:
             print(f"🚨 清空数据失败: {e}")
 
-        # 使用 CRC32 函数对 user_id 转数字，利用 MOD 方法分批执行插入
-        batch_count = 20  # 可根据数据量调整分批数
+        # 使用 CRC32 函数将 user_id 转为数字，利用 MOD 方法分批执行插入
+        batch_count = 10  # 分为10批，可根据数据量调整
         for i in range(batch_count):
             insert_query = f"""            
-                INSERT INTO {table_name} (dt, variation, new_users, d1, d3, d7, d15, total_assigned)
+                INSERT INTO {table_name1} (dt, variation, new_users, d1, d3, d7, d15, total_assigned)
 SELECT
     /*+ SET_VAR (query_timeout = 30000) */ 
     u.first_visit_date AS dt, 
@@ -148,7 +148,7 @@ LEFT JOIN (
     WHERE experiment_id = '{experiment_name}'
     GROUP BY DATE(timestamp_assigned), CAST(variation_id AS CHAR)
 ) ta ON ta.assign_date = u.first_visit_date AND ta.variation = e.variation
--- 排除未分组用户，并利用 CRC32 对 u.user_id 分批处理
+-- 排除未分组用户，并且利用 CRC32 对 u.user_id 分批
 WHERE e.variation IS NOT NULL
   AND MOD(CRC32(u.user_id), {batch_count}) = {i}
 GROUP BY u.first_visit_date, e.variation
@@ -157,63 +157,9 @@ ORDER BY u.first_visit_date, e.variation;
             try:
                 with engine.connect() as conn:
                     conn.execute(text(insert_query))
-                print(f"✅ 分批 {i+1}/{batch_count} 数据已成功写入 {table_name} 中！")
+                print(f"✅ 分批 {i+1}/{batch_count} 数据已成功写入 {table_name1} 中！")
             except SQLAlchemyError as e:
                 print(f"🚨 分批 {i+1}/{batch_count} 数据插入失败: {e}")
-
-        # 所有批次数据插入完毕后，进行数据聚合
-        merge_query = f"""
-        SELECT
-            dt,
-            variation,
-            SUM(new_users) AS new_users,
-            SUM(d1) AS d1,
-            SUM(d3) AS d3,
-            SUM(d7) AS d7,
-            SUM(d15) AS d15,
-            MAX(total_assigned) AS total_assigned
-        FROM {table_name}
-        GROUP BY dt, variation;
-        """
-        aggregated_data = []
-        try:
-            with engine.connect() as conn:
-                result = conn.execute(text(merge_query))
-                # 使用 .mappings() 获取字典格式结果（需 SQLAlchemy 1.4+）
-                aggregated_data = result.mappings().all()
-            print("✅ 数据聚合成功！")
-        except SQLAlchemyError as e:
-            print(f"🚨 数据聚合失败: {e}")
-
-        # 清空原表中的分批数据（覆盖）
-        try:
-            with engine.connect() as conn:
-                conn.execute(text(f"TRUNCATE TABLE {table_name};"))
-            print(f"✅ 表 {table_name} 已成功清空，准备写入聚合后的数据！")
-        except SQLAlchemyError as e:
-            print(f"🚨 清空数据失败: {e}")
-
-        # 将聚合后的数据重新插入原表中
-        for row in aggregated_data:
-            insert_row_query = f"""
-            INSERT INTO {table_name} (dt, variation, new_users, d1, d3, d7, d15, total_assigned)
-            VALUES (:dt, :variation, :new_users, :d1, :d3, :d7, :d15, :total_assigned);
-            """
-            try:
-                with engine.connect() as conn:
-                    conn.execute(text(insert_row_query), {
-                        'dt': row['dt'],
-                        'variation': row['variation'],
-                        'new_users': row['new_users'],
-                        'd1': row['d1'],
-                        'd3': row['d3'],
-                        'd7': row['d7'],
-                        'd15': row['d15'],
-                        'total_assigned': row['total_assigned']
-                    })
-                print(f"✅ 聚合数据插入 {row['dt']} - {row['variation']} 成功！")
-            except SQLAlchemyError as e:
-                print(f"🚨 聚合数据插入失败: {e}")
 
     except Exception as e:
         print(f"🚨 执行失败: {e}")

@@ -3,7 +3,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
 
-from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
+from state3.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 

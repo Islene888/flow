@@ -2,11 +2,11 @@ import urllib.parse
 import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
+from datetime import datetime, timedelta
 
 from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=FutureWarning)
-
 
 # ============= 数据库连接 =============
 def get_db_connection():
@@ -15,7 +15,6 @@ def get_db_connection():
     engine = create_engine(DATABASE_URL)
     print("数据库连接已建立。")
     return engine
-
 
 # ============= 分片插入原始明细数据 =============
 def insert_new_conversation_data(tag):
@@ -26,9 +25,17 @@ def insert_new_conversation_data(tag):
         return None
 
     experiment_name = experiment_data['experiment_name']
-    start_time = experiment_data['phase_start_time']
-    end_time = experiment_data['phase_end_time']
+    start_time = experiment_data['phase_start_time']  # datetime 对象
+    end_time = experiment_data['phase_end_time']        # datetime 对象
     print(f"实验名称：{experiment_name}，实验时间：{start_time} 至 {end_time}")
+
+    # 转换为日期字符串（YYYY-MM-DD）
+    start_date_str = start_time.strftime('%Y-%m-%d')
+    end_date_str = end_time.strftime('%Y-%m-%d')
+
+    # 将日期字符串转换为 date 对象，方便逐日遍历
+    start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+    end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
 
     engine = get_db_connection()
 
@@ -42,7 +49,6 @@ def insert_new_conversation_data(tag):
         experiment_name VARCHAR(255)
     );
     """
-
     truncate_query = f"TRUNCATE TABLE {table_name};"
 
     with engine.connect() as conn:
@@ -52,32 +58,37 @@ def insert_new_conversation_data(tag):
         conn.execute(text(truncate_query))
         print(f"目标表 {table_name} 数据已清空。")
 
-        # 分片插入：这里对每个分片 MOD(crc32(c.user_id), 100) = {mod_value} 进行批量插入
-        for mod_value in range(100):
-            batch_insert_query = f"""
-            INSERT INTO {table_name} (variation, total_new_conversation, unique_new_conversation_users, new_conversation_ratio, experiment_name)
-            SELECT /*+ SET_VAR(query_timeout = 30000) */
-                a.variation_id AS variation,
-                COUNT(DISTINCT c.conversation_id) AS total_new_conversation,
-                COUNT(DISTINCT c.user_id) AS unique_new_conversation_users,
-                ROUND(COUNT(DISTINCT c.conversation_id) * 1.0 / COUNT(DISTINCT c.user_id), 4) AS new_conversation_ratio,
-                '{experiment_name}' AS experiment_name
-            FROM flow_event_info.tbl_app_event_chat_send c
-            JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
-                ON c.user_id = a.user_id
-            WHERE a.experiment_id = '{experiment_name}'
-              AND c.ingest_timestamp BETWEEN '{start_time}' AND '{end_time}'
-              AND c.conversation_length = 1
-              AND c.conversation_id IS NOT NULL
-              AND MOD(crc32(c.user_id), 100) = {mod_value}
-            GROUP BY a.variation_id;
-            """
-            conn.execute(text(batch_insert_query))
-            print(f"批次插入完成，分片条件：MOD(crc32(c.user_id), 100) = {mod_value}")
+        # 循环遍历每天的数据
+        current_date = start_date
+        while current_date <= end_date:
+            current_date_str = current_date.strftime('%Y-%m-%d')
+            print(f"处理日期：{current_date_str}")
+            # 对每个日期再按 MOD 分片插入
+            for mod_value in range(100):
+                batch_insert_query = f"""
+                INSERT INTO {table_name} (variation, total_new_conversation, unique_new_conversation_users, new_conversation_ratio, experiment_name)
+                SELECT /*+ SET_VAR(query_timeout = 30000) */
+                    a.variation_id AS variation,
+                    COUNT(DISTINCT c.conversation_id) AS total_new_conversation,
+                    COUNT(DISTINCT c.user_id) AS unique_new_conversation_users,
+                    ROUND(COUNT(DISTINCT c.conversation_id) * 1.0 / COUNT(DISTINCT c.user_id), 4) AS new_conversation_ratio,
+                    '{experiment_name}' AS experiment_name
+                FROM flow_event_info.tbl_app_event_chat_send c
+                JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
+                    ON c.user_id = a.user_id
+                WHERE a.experiment_id = '{experiment_name}'
+                  AND c.event_date = '{current_date_str}'
+                  AND c.conversation_length = 1
+                  AND c.conversation_id IS NOT NULL
+                  AND MOD(crc32(c.user_id), 100) = {mod_value}
+                GROUP BY a.variation_id;
+                """
+                conn.execute(text(batch_insert_query))
+                print(f"  分片 {mod_value} 插入完成。")
+            current_date += timedelta(days=1)
 
     print(f"所有批次数据插入完成，目标表：{table_name}")
     return table_name
-
 
 # ============= 计算汇总并覆盖原表 =============
 def overwrite_new_conversation_table_with_summary(tag):
@@ -124,7 +135,6 @@ def overwrite_new_conversation_table_with_summary(tag):
 
     print(f"汇总数据已覆盖表：{table_name}")
 
-
 # ============= 主流程 =============
 def main(tag):
     print("主流程开始执行。")
@@ -139,7 +149,6 @@ def main(tag):
     overwrite_new_conversation_table_with_summary(tag)
 
     print("主流程执行完毕。")
-
 
 # ============= 示例调用 =============
 if __name__ == "__main__":
