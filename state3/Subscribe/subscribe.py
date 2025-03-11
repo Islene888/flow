@@ -46,7 +46,7 @@ def insert_subscribe_data(tag):
         renewal_users INT,
         due_users INT,
         renewal_rate DOUBLE,
-        experiment_name VARCHAR(255)
+        experiment_tag VARCHAR(255)
     );
     """
     truncate_query = f"TRUNCATE TABLE {table_name};"
@@ -59,7 +59,7 @@ def insert_subscribe_data(tag):
 
         # 插入订阅指标数据
         insert_query = f"""
-        INSERT INTO {table_name} (variation, total_active_users, new_subscribe_users, new_subscribe_rate, total_subscribe_revenue, subscribe_ARPU, renewal_users, due_users, renewal_rate, experiment_name)
+        INSERT INTO {table_name} (variation, total_active_users, new_subscribe_users, new_subscribe_rate, total_subscribe_revenue, subscribe_ARPU, renewal_users, due_users, renewal_rate, experiment_tag)
         WITH 
         exp AS (
           SELECT 
@@ -129,7 +129,7 @@ def insert_subscribe_data(tag):
           CASE WHEN COALESCE(d.due_users, 0) = 0 THEN 0 
                ELSE ROUND(COALESCE(r.renewal_users, 0) / d.due_users, 4)
           END AS renewal_rate,
-          '{experiment_name}' AS experiment_name
+          '{tag}' AS experiment_tag
         FROM active_users a
         LEFT JOIN new_subscribe n ON a.variation_id = n.variation_id
         LEFT JOIN subscribe_revenue sr ON a.variation_id = sr.variation_id
@@ -157,7 +157,7 @@ def overwrite_subscribe_table_with_summary(tag):
         SUM(renewal_users) AS renewal_users,
         SUM(due_users) AS due_users,
         ROUND(SUM(renewal_users) / SUM(due_users), 4) AS renewal_rate,
-        MAX(experiment_name) AS experiment_name
+        MAX(experiment_tag) AS experiment_tag
     FROM {table_name}
     WHERE variation != 'null'
     GROUP BY variation;
@@ -176,7 +176,7 @@ def overwrite_subscribe_table_with_summary(tag):
         renewal_users INT,
         due_users INT,
         renewal_rate DOUBLE,
-        experiment_name VARCHAR(255)
+        experiment_tag VARCHAR(255)
     );
     """
 
@@ -187,10 +187,10 @@ def overwrite_subscribe_table_with_summary(tag):
 
         for _, row in summary_df.iterrows():
             insert_query = f"""
-            INSERT INTO {table_name} (variation, total_active_users, new_subscribe_users, new_subscribe_rate, total_subscribe_revenue, subscribe_ARPU, renewal_users, due_users, renewal_rate, experiment_name)
+            INSERT INTO {table_name} (variation, total_active_users, new_subscribe_users, new_subscribe_rate, total_subscribe_revenue, subscribe_ARPU, renewal_users, due_users, renewal_rate, experiment_tag)
             VALUES ('{row['variation']}', {row['total_active_users']}, {row['new_subscribe_users']}, {row['new_subscribe_rate']},
                     {row['total_subscribe_revenue']}, {row['subscribe_ARPU']}, {row['renewal_users']}, {row['due_users']}, {row['renewal_rate']},
-                    '{row['experiment_name']}');
+                    '{row['experiment_tag']}');
             """
             conn.execute(text(insert_query))
     print(f"订阅指标汇总数据已覆盖表：{table_name}")

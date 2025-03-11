@@ -1,9 +1,15 @@
 import warnings
+from symbol import subscript
+
 from urllib3.exceptions import NotOpenSSLWarning
 
-from state2.Engagement.Events import Follow
-from state3.Retention import retention_report_table_ETL
+from state3.Advertisement import advertisement
+from state3.Business import Main_business
+from state3.Engagement import Main_Engagement
+from state3.Recharge import recharge
+from state3.Retention import retention_report_table_ETL, Main_Retention
 from state3.Retention.retention_wide_table_ETL import insert_experiment_data_to_wide_table
+from state3.Subscribe import subscribe
 from state3.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
@@ -16,18 +22,24 @@ warnings.filterwarnings("ignore", category=SAWarning)
 
 tag = 'backend'  # 定义实验标签
 # tag = 'web'  # 定义实验标签
+# 留存计算
+Main_Retention.main(tag)
 
-# test.main(tag)
-#根据标签获取实验详细信息
-get_experiment_details_by_tag(tag)
+# 充值计算
+recharge.main(tag)
 
-# 将实验数据插入宽表
-insert_experiment_data_to_wide_table(tag)
+# 广告计算
+advertisement.main(tag)
 
-# 生成并保存留存报告
-retention_report_table_ETL.main(tag)
+# 订阅计算
+subscribe.main(tag)
 
-# Engagement_report_table_ETL.main(tag)
+# 商业化相关的5个指标计算
+Main_business.main(tag)
+
+# Engagement 相关的9个指标计算
+Main_Engagement.main(tag)
+
 
 
 

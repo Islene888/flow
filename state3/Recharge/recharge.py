@@ -43,7 +43,7 @@ def insert_recharge_data(tag):
         recharge_ARPU DOUBLE,
         recharge_conversion_rate DOUBLE,
         recharge_frequency DOUBLE,
-        experiment_name VARCHAR(255)
+        experiment_tag VARCHAR(255)  -- 这里修改 experiment_name 为 experiment_tag
     );
     """
     truncate_query = f"TRUNCATE TABLE {table_name};"
@@ -56,7 +56,7 @@ def insert_recharge_data(tag):
 
         # 插入充值指标数据：按照实验期间数据，统计活跃用户和充值指标
         insert_query = f"""
-        INSERT INTO {table_name} (variation, total_active_users, total_recharge_revenue, recharge_ARPU, recharge_conversion_rate, recharge_frequency, experiment_name)
+        INSERT INTO {table_name} (variation, total_active_users, total_recharge_revenue, recharge_ARPU, recharge_conversion_rate, recharge_frequency, experiment_tag)
         WITH 
         exp AS (
           SELECT 
@@ -92,7 +92,7 @@ def insert_recharge_data(tag):
           ROUND(r.total_recharge_revenue / a.total_active_users, 4) AS recharge_ARPU,
           ROUND(r.recharge_user_count * 1.0 / a.total_active_users, 4) AS recharge_conversion_rate,
           ROUND(r.total_recharge_orders * 1.0 / r.recharge_user_count, 4) AS recharge_frequency,
-          '{experiment_name}' AS experiment_name
+          '{tag}' AS experiment_tag  -- 这里修改 experiment_name 为 tag
         FROM active_users a
         LEFT JOIN recharge_stats r 
           ON a.variation_id = r.variation_id;
@@ -115,7 +115,7 @@ def overwrite_recharge_table_with_summary(tag):
         ROUND(SUM(total_recharge_revenue) / SUM(total_active_users), 4) AS recharge_ARPU,
         SUM(recharge_conversion_rate) AS recharge_conversion_rate,
         SUM(recharge_frequency) AS recharge_frequency,
-        MAX(experiment_name) AS experiment_name
+        MAX(experiment_tag) AS experiment_tag
     FROM {table_name}
     WHERE variation != 'null'
     GROUP BY variation;
@@ -131,7 +131,7 @@ def overwrite_recharge_table_with_summary(tag):
         recharge_ARPU DOUBLE,
         recharge_conversion_rate DOUBLE,
         recharge_frequency DOUBLE,
-        experiment_name VARCHAR(255)
+        experiment_tag VARCHAR(255)  -- 这里修改 experiment_name 为 experiment_tag
     );
     """
 
@@ -142,8 +142,8 @@ def overwrite_recharge_table_with_summary(tag):
 
         for _, row in summary_df.iterrows():
             insert_query = f"""
-            INSERT INTO {table_name} (variation, total_active_users, total_recharge_revenue, recharge_ARPU, recharge_conversion_rate, recharge_frequency, experiment_name)
-            VALUES ('{row['variation']}', {row['total_active_users']}, {row['total_recharge_revenue']}, {row['recharge_ARPU']}, {row['recharge_conversion_rate']}, {row['recharge_frequency']}, '{row['experiment_name']}');
+            INSERT INTO {table_name} (variation, total_active_users, total_recharge_revenue, recharge_ARPU, recharge_conversion_rate, recharge_frequency, experiment_tag)
+            VALUES ('{row['variation']}', {row['total_active_users']}, {row['total_recharge_revenue']}, {row['recharge_ARPU']}, {row['recharge_conversion_rate']}, {row['recharge_frequency']}, '{row['experiment_tag']}');
             """
             conn.execute(text(insert_query))
     print(f"汇总数据已覆盖表：{table_name}")
