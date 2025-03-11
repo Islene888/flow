@@ -30,6 +30,5 @@ print(f"Minimum: {minimum}")
 
 
 
-#完事了？
 # 停止 SparkSession
 spark.stop()

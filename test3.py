@@ -29,7 +29,5 @@ print(f"Maximum: {maximum}")
 print(f"Minimum: {minimum}")
 
 
-
-#完事了？
 # 停止 SparkSession
 spark.stop()
