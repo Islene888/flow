@@ -22,7 +22,7 @@ def get_db_connection():
 
 # ============= 从宽表提取数据 =============
 def extract_data_from_db(tag, engine):
-    query = f"SELECT * FROM tbl_wide_user_retention_{tag};"
+    query = f"SELECT * FROM tbl_wide_user_retention_active_{tag};"
     try:
         df = pd.read_sql(query, engine)
         # 将 new_users 重命名为 users，方便后续计算；coverage_ratio 字段直接保留
@@ -202,7 +202,7 @@ def generate_report(tag):
 
 # ============= 创建报告表（数据库表结构） =============
 def create_report_table(engine, tag):
-    table_name = f"tbl_report_user_retention_{tag}"
+    table_name = f"tbl_report_user_retention_active_{tag}"
     create_table_query = f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
         dt DATE,
@@ -285,7 +285,7 @@ def load_analysis_results(final_df, engine, table_name):
 def main(tag):
     engine = get_db_connection()
     create_report_table(engine, tag)
-    table_name = f"tbl_report_user_retention_{tag}"
+    table_name = f"tbl_report_user_retention_active_{tag}"
     final_report = generate_report(tag)
     if final_report is None:
         print("生成报告失败。")
@@ -294,5 +294,5 @@ def main(tag):
 
 
 if __name__ == "__main__":
-    tag = "backend"  # 根据实际标签修改
+    tag = "recommendation_mobil"  # 根据实际标签修改
     main(tag)

@@ -3,13 +3,12 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
 from datetime import datetime, timedelta
+import sys
 
 from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-
-# ============= 数据库连接 =============
 def get_db_connection():
     password = urllib.parse.quote_plus("flowgpt@2024.com")
     DATABASE_URL = f"mysql+pymysql://bigdata:{password}@3.135.224.186:9030/flow_ab_test?charset=utf8mb4"
@@ -17,28 +16,34 @@ def get_db_connection():
     print("✅ 数据库连接已建立。")
     return engine
 
-
-# ============= 插入 Follow 事件数据 =============
-def insert_bot_view_data(tag):
+def main(tag):
     print(f"🚀 开始获取实验数据，标签：{tag}")
 
-    # 获取实验信息
     experiment_data = get_experiment_details_by_tag(tag)
     if not experiment_data:
         print(f"⚠️ 没有找到符合标签 '{tag}' 的实验数据！")
-        return None
+        return
 
     experiment_name = experiment_data['experiment_name']
     start_time = experiment_data['phase_start_time']
-    end_time = experiment_data['phase_end_time']
-    print(f"📝 实验名称：{experiment_name}，实验时间：{start_time} 至 {end_time}")
+    end_time   = experiment_data['phase_end_time']
+
+    start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+    end_time_str   = end_time.strftime("%Y-%m-%d %H:%M:%S")
+
+    start_day = start_time.strftime("%Y-%m-%d")
+    end_day   = end_time.strftime("%Y-%m-%d")
+
+    print(f"📝 实验名称：{experiment_name}")
+    print(f"⏰ 计算时间范围：{start_time_str} ~ {end_time_str}")
+    print(f"   首日：{start_day}，末日：{end_day}")
 
     engine = get_db_connection()
     table_name = f"tbl_report_follow_{tag}"
 
-    # **创建目标表**
     create_table_query = f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
+        event_date VARCHAR(255),
         variation VARCHAR(255),
         total_follow INT,
         unique_follow_users INT,
@@ -46,111 +51,58 @@ def insert_bot_view_data(tag):
         experiment_name VARCHAR(255)
     );
     """
+
     truncate_query = f"TRUNCATE TABLE {table_name};"
+
+    # -- 这里使用子查询来实现先计算再过滤
+    insert_query = f"""
+    INSERT INTO {table_name} (event_date, variation, total_follow, unique_follow_users, follow_ratio, experiment_name)
+    SELECT 
+        raw.event_date,
+        raw.variation,
+        raw.total_follow,
+        raw.unique_follow_users,
+        raw.follow_ratio,
+        '{experiment_name}' AS experiment_name
+    FROM (
+        SELECT /*+ SET_VAR(query_timeout = 30000) */
+            a.event_date,
+            a.variation_id AS variation,
+            COUNT(DISTINCT f.event_id) AS total_follow,
+            COUNT(DISTINCT f.user_id) AS unique_follow_users,
+            CASE 
+                WHEN COUNT(DISTINCT f.user_id) = 0 THEN 0 
+                ELSE ROUND(COUNT(DISTINCT f.event_id) * 1.0 / COUNT(DISTINCT f.user_id), 4)
+            END AS follow_ratio
+        FROM flow_event_info.tbl_app_event_bot_follow f
+        JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
+            ON f.user_id = a.user_id
+        WHERE a.experiment_id = '{experiment_name}'
+          AND f.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
+        GROUP BY a.event_date, a.variation_id
+        ORDER BY a.event_date, a.variation_id
+    ) AS raw
+    WHERE raw.event_date NOT IN ('{start_day}', '{end_day}');
+    """
 
     with engine.connect() as conn:
         conn.execute(text("SET query_timeout = 30000;"))
         conn.execute(text(create_table_query))
         conn.execute(text(truncate_query))
-        print(f"✅ 目标表 {table_name} 已创建，并已清空历史数据。")
+        print(f"✅ 表 {table_name} 已创建并清空。")
 
-        # **按天循环**
-        current_date = start_time
-        while current_date <= end_time:
-            date_str = current_date.strftime("%Y-%m-%d")
-            print(f"📅 处理日期：{date_str}")
+        conn.execute(text(insert_query))
+        print(f"✅ 已插入过滤后的统计结果到表 {table_name} 中。")
 
-            # **每天分 10 批次插入**
-            for batch_index in range(10):
-                print(f"📌 执行日期 {date_str}，批次 {batch_index + 1}/10 插入...")
+    # -- 查看结果
+    result_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY event_date, variation;", engine)
+    print("🚀 最终表数据（不含首尾天）:")
+    print(result_df)
 
-                batch_insert_query = f"""
-                INSERT INTO {table_name} (variation, total_follow, unique_follow_users, follow_ratio, experiment_name)
-                SELECT /*+ SET_VAR(query_timeout = 30000) */
-                    a.variation_id AS variation,
-                    COUNT(DISTINCT f.event_id) AS total_follow,
-                    COUNT(DISTINCT f.user_id) AS unique_follow_users,
-                    CASE 
-                        WHEN COUNT(DISTINCT f.user_id) = 0 THEN 0 
-                        ELSE ROUND(COUNT(DISTINCT f.event_id) * 1.0 / COUNT(DISTINCT f.user_id), 4)
-                    END AS follow_ratio,
-                    '{experiment_name}' as experiment_name
-                FROM flow_event_info.tbl_app_event_bot_follow f
-                JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
-                    ON f.user_id = a.user_id
-                WHERE a.experiment_id = '{experiment_name}'
-                  AND f.ingest_timestamp >= '{date_str} 00:00:00'
-                  AND f.ingest_timestamp < '{date_str} 23:59:59'
-                  AND MOD(crc32(f.user_id), 10) = {batch_index}
-                GROUP BY a.variation_id;
-                """
-                try:
-                    conn.execute(text(batch_insert_query))
-                    print(f"✅ 日期 {date_str}，批次 {batch_index + 1}/10 插入成功。")
-                except Exception as e:
-                    print(f"❌ 日期 {date_str}，批次 {batch_index + 1}/10 插入失败，错误：{e}")
-
-            # **日期加 1 天**
-            current_date += timedelta(days=1)
-
-    print(f"✅ 所有数据插入完成，目标表：{table_name}")
-    return table_name
-
-
-# ============= 计算汇总并覆盖原表 =============
-def overwrite_follow_table_with_summary(tag):
-    print(f"📊 开始生成汇总数据，并覆盖到原表，标签：{tag}")
-
-    table_name = f"tbl_report_follow_{tag}"
-
-    summary_query = f"""
-    SELECT 
-        variation,
-        SUM(total_follow) AS total_follow,
-        SUM(unique_follow_users) AS unique_follow_users,
-        CASE 
-            WHEN SUM(unique_follow_users) = 0 THEN 0 
-            ELSE ROUND(SUM(total_follow) / SUM(unique_follow_users), 4)
-        END AS follow_ratio,
-        MAX(experiment_name) AS experiment_name 
-    FROM {table_name}
-    WHERE variation != 'null'
-    GROUP BY variation;
-    """
-
-    engine = get_db_connection()
-    summary_df = pd.read_sql(summary_query, engine)
-
-    with engine.connect() as conn:
-        conn.execute(text("SET query_timeout = 30000;"))
-        conn.execute(text(f"TRUNCATE TABLE {table_name};"))
-
-        for _, row in summary_df.iterrows():
-            insert_query = f"""
-            INSERT INTO {table_name} (variation, total_follow, unique_follow_users, follow_ratio, experiment_name)
-            VALUES ('{row['variation']}', {row['total_follow']}, {row['unique_follow_users']}, {row['follow_ratio']}, '{row['experiment_name']}');
-            """
-            conn.execute(text(insert_query))
-
-    print(f"✅ 汇总数据已覆盖表：{table_name}")
-
-
-# ============= 主流程 =============
-def main(tag):
-    print("🚀 主流程开始执行。")
-
-    # 先插入数据
-    table_name = insert_bot_view_data(tag)
-    if table_name is None:
-        print("⚠️ 数据写入或建表失败！")
-        return
-
-    # 计算汇总数据
-    overwrite_follow_table_with_summary(tag)
-
-    print("✅ 主流程执行完毕。")
-
-
-# ============= 示例调用 =============
 if __name__ == "__main__":
-    main("backend")
+    if len(sys.argv) > 1:
+        tag = sys.argv[1]
+    else:
+        tag = "trans_es"
+        print(f"⚠️ 未指定实验标签，默认使用：{tag}")
+    main(tag)

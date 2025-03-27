@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
-def insert_experiment_data_to_wide_table(tag):
+def insert_experiment_data_to_wide_active_table(tag):
     try:
         # 获取实验的详细信息
         experiment_data = get_experiment_details_by_tag(tag)
@@ -31,8 +31,8 @@ def insert_experiment_data_to_wide_table(tag):
         engine = create_engine(DATABASE_URL)
 
         # 动态构建表名（原表，用于分批数据插入及后续聚合覆盖）
-        table_name = f"tbl_wide_user_retention_{tag}"  # 宽表表名
-        report_table_name = f"tbl_report_user_retention_{tag}"  # 报告表表名
+        table_name = f"tbl_wide_user_retention_active_{tag}"  # 宽表表名
+        report_table_name = f"tbl_report_user_retention_active_{tag}"  # 报告表表名
 
         # 创建宽表和报告表（如果不存在）
         create_table_query = f"""
@@ -97,62 +97,49 @@ def insert_experiment_data_to_wide_table(tag):
         for i in range(batch_count):
             insert_query = f"""            
                 INSERT INTO {table_name} (dt, variation, new_users, d1, d3, d7, d15, total_assigned)
-   SELECT
-    /*+ SET_VAR (query_timeout = 30000) */ 
-    u.first_visit_date AS dt, 
-    e.variation, 
-    COUNT(DISTINCT u.user_id) AS new_users,
-    COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, u.first_visit_date) = 1 THEN a.user_id END) AS d1,
-    COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, u.first_visit_date) = 3 THEN a.user_id END) AS d3,
-    COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, u.first_visit_date) = 7 THEN a.user_id END) AS d7,
-    COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, u.first_visit_date) = 15 THEN a.user_id END) AS d15,
-    MAX(COALESCE(ta.total_assigned, 0)) AS total_assigned
-FROM (
-    -- 严格新用户定义：筛选指定日期区间内首次访问的用户
-    SELECT 
-        user_id,
-        DATE(first_visit_date) AS first_visit_date
-    FROM flow_wide_info.tbl_wide_user_first_visit_app_info
-    WHERE first_visit_date BETWEEN '{formatted_start_time}' AND '{formatted_end_time}'
-) u
-LEFT JOIN (
-    -- 活跃用户：使用 tbl_wide_active_user_app_info 表，keep_alive_flag = 1 的数据
-    SELECT
-        d.user_id,
-        d.active_date
-    FROM flow_wide_info.tbl_wide_active_user_app_info d
-    WHERE
-        d.active_date BETWEEN '{start_time}' AND '{end_time}'
-        AND d.keep_alive_flag = 1
-        AND d.user_id IS NOT NULL
-        AND d.user_id != ''
-    GROUP BY d.active_date, d.user_id
-) a ON u.user_id = a.user_id
-LEFT JOIN (
-    -- 实验分组信息：获取指定实验的分组信息
-    SELECT
-        user_id,
-        CAST(variation_id AS CHAR) AS variation
-    FROM flow_wide_info.tbl_wide_experiment_assignment_hi
-    WHERE
-        experiment_id = '{experiment_name}'
-        AND timestamp_assigned BETWEEN '{start_time}' AND '{end_time}'
-) e ON u.user_id = e.user_id
-LEFT JOIN (
-    -- 统计每天、每个 variation 被分配的用户数量
-    SELECT 
-        DATE(timestamp_assigned) AS assign_date,
-        CAST(variation_id AS CHAR) AS variation,
-        COUNT(DISTINCT user_id) AS total_assigned
-    FROM flow_wide_info.tbl_wide_experiment_assignment_hi
-    WHERE experiment_id = '{experiment_name}'
-    GROUP BY DATE(timestamp_assigned), CAST(variation_id AS CHAR)
-) ta ON ta.assign_date = u.first_visit_date AND ta.variation = e.variation
--- 排除未分组用户，并且利用 CRC32 对 u.user_id 分批
-WHERE e.variation IS NOT NULL
-  AND MOD(CRC32(u.user_id), {batch_count}) = {i}
-GROUP BY u.first_visit_date, e.variation
-ORDER BY u.first_visit_date, e.variation;
+                SELECT
+                /*+ SET_VAR (query_timeout = 30000) */
+                base.active_date AS dt,
+                e.variation,
+                COUNT(DISTINCT base.user_id) AS base_active_users,
+                COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, base.active_date) = 1 THEN a.user_id END) AS d1,
+                COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, base.active_date) = 3 THEN a.user_id END) AS d3,
+                COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, base.active_date) = 7 THEN a.user_id END) AS d7,
+                COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, base.active_date) = 15 THEN a.user_id END) AS d15,
+                MAX(COALESCE(ta.total_assigned, 0)) AS total_assigned
+            FROM flow_wide_info.tbl_wide_active_user_app_info base
+            LEFT JOIN flow_wide_info.tbl_wide_active_user_app_info a
+              ON base.user_id = a.user_id
+                 AND a.active_date BETWEEN '{start_time}' AND '{end_time}'
+            LEFT JOIN (
+                -- 实验分组信息
+                SELECT
+                    user_id,
+                    CAST(variation_id AS CHAR) AS variation
+                FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+                WHERE experiment_id = '{experiment_name}'
+                  AND timestamp_assigned BETWEEN '{start_time}' AND '{end_time}'
+            ) e ON base.user_id = e.user_id
+            LEFT JOIN (
+                -- 每天每个分组的分配用户数统计
+                SELECT 
+                    DATE(timestamp_assigned) AS assign_date,
+                    CAST(variation_id AS CHAR) AS variation,
+                    COUNT(DISTINCT user_id) AS total_assigned
+                FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+                WHERE experiment_id = '{experiment_name}'
+                GROUP BY DATE(timestamp_assigned), CAST(variation_id AS CHAR)
+            ) ta ON ta.assign_date = base.active_date
+                  AND ta.variation = e.variation
+            WHERE base.active_date BETWEEN '{start_time}' AND '{end_time}'
+              AND base.keep_alive_flag = 1
+              AND base.user_id IS NOT NULL
+              AND base.user_id != ''
+              AND e.variation IS NOT NULL
+              AND MOD(CRC32(base.user_id), {batch_count}) = {i}
+            GROUP BY base.active_date, e.variation
+            ORDER BY base.active_date, e.variation;
+
             """
             try:
                 with engine.connect() as conn:
@@ -220,5 +207,5 @@ ORDER BY u.first_visit_date, e.variation;
 
 # 如果需要运行，可调用函数，例如：
 if __name__ == "__main__":
-    tag = "backend"  # 根据实际标签修改
+    tag = "recommendation_mobil"  # 根据实际标签修改
     insert_experiment_data_to_wide_table(tag)

@@ -3,44 +3,52 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
 from datetime import datetime, timedelta
-import logging
+import sys
 
 from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# 设置日志
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-# ============= 数据库连接 =============
 def get_db_connection():
     password = urllib.parse.quote_plus("flowgpt@2024.com")
     DATABASE_URL = f"mysql+pymysql://bigdata:{password}@3.135.224.186:9030/flow_ab_test?charset=utf8mb4"
-    engine = create_engine(DATABASE_URL, pool_recycle=3600)
-    logging.info("✅ 数据库连接已建立。")
+    engine = create_engine(DATABASE_URL)
+    print("✅ 数据库连接已建立。")
     return engine
 
+def main(tag):
+    print(f"🚀 开始获取实验数据，标签：{tag}")
 
-# ============= 按天 & 分片插入数据 =============
-def insert_new_conversation_data(tag):
-    logging.info(f"🚀 开始获取实验数据，标签：{tag}")
+    # 获取实验信息
     experiment_data = get_experiment_details_by_tag(tag)
     if not experiment_data:
-        logging.warning(f"⚠️ 没有找到符合标签 '{tag}' 的实验数据！")
-        return None
+        print(f"⚠️ 没有找到符合标签 '{tag}' 的实验数据！")
+        return
 
     experiment_name = experiment_data['experiment_name']
     start_time = experiment_data['phase_start_time']
-    end_time = experiment_data['phase_end_time']
+    end_time   = experiment_data['phase_end_time']
 
-    logging.info(f"📝 实验名称：{experiment_name}，实验时间：{start_time} 至 {end_time}")
+    start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+    end_time_str   = end_time.strftime("%Y-%m-%d %H:%M:%S")
+
+    # 用于外层过滤的首日和末日
+    start_day_str = start_time.strftime("%Y-%m-%d")
+    end_day_str   = end_time.strftime("%Y-%m-%d")
+
+    print(f"📝 实验名称：{experiment_name}")
+    print(f"⏰ 计算时间范围：{start_time_str} ~ {end_time_str}")
+    print(f"   首日：{start_day_str}，末日：{end_day_str}")
 
     engine = get_db_connection()
+    # 修改目标表名，将 chat 改为 new_conversation
     table_name = f"tbl_report_new_conversation_{tag}"
 
+    # 建表（如表存在则覆盖），字段名称也修改为 new_conversation 相关
+    drop_table_query = f"DROP TABLE IF EXISTS {table_name};"
     create_table_query = f"""
-    CREATE TABLE IF NOT EXISTS {table_name} (
+    CREATE TABLE {table_name} (
+        event_date VARCHAR(255),
         variation VARCHAR(255),
         total_new_conversation INT,
         unique_new_conversation_users INT,
@@ -48,81 +56,58 @@ def insert_new_conversation_data(tag):
         experiment_name VARCHAR(255)
     );
     """
-    truncate_query = f"TRUNCATE TABLE {table_name};"
-
+    # 执行建表操作
     with engine.connect() as conn:
         conn.execute(text("SET query_timeout = 30000;"))
+        conn.execute(text(drop_table_query))
         conn.execute(text(create_table_query))
-        conn.execute(text(truncate_query))
-        logging.info(f"✅ 目标表 {table_name} 已创建，并清空数据。")
+        print(f"✅ 表 {table_name} 已创建。")
 
-        current_date = start_time
-        while current_date <= end_time:
-            date_str = current_date.strftime('%Y-%m-%d')
-            logging.info(f"📅 处理日期：{date_str}")
+    # 将开始和结束日期转换为 datetime 对象，并计算中间日期（不包含首日和末日）
+    start_date = datetime.strptime(start_day_str, "%Y-%m-%d")
+    end_date = datetime.strptime(end_day_str, "%Y-%m-%d")
+    delta_days = (end_date - start_date).days
 
-            for batch_index in range(10):  # 10 分片
-                batch_insert_query = text(f"""
-                INSERT INTO {table_name} (variation, total_new_conversation, unique_new_conversation_users, new_conversation_ratio, experiment_name)
-                SELECT 
-                    a.variation_id AS variation,
-                    COUNT(DISTINCT c.conversation_id) AS total_new_conversation,
-                    COUNT(DISTINCT c.user_id) AS unique_new_conversation_users,
-                    CASE 
-                        WHEN COUNT(DISTINCT c.user_id) = 0 THEN 0 
-                        ELSE ROUND(COUNT(DISTINCT c.conversation_id) / COUNT(DISTINCT c.user_id), 4) 
-                    END AS new_conversation_ratio,
-                    :experiment_name AS experiment_name
-                FROM flow_event_info.tbl_app_event_chat_send c
-                JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
-                    ON c.user_id = a.user_id
-                WHERE a.experiment_id = :experiment_name
-                  AND c.ingest_timestamp >= :start_time
-                  AND c.ingest_timestamp < :end_time
-                  AND c.conversation_length = 1
-                  AND MOD(crc32(c.user_id), 10) = :batch_index
-                GROUP BY a.variation_id;
-                """)
+    # 遍历首日之后到末日前的每一天，分批插入数据
+    with engine.connect() as conn:
+        conn.execute(text("SET query_timeout = 30000;"))
+        for d in range(1, delta_days):
+            current_date = (start_date + timedelta(days=d)).strftime("%Y-%m-%d")
+            batch_insert_query = f"""
+            INSERT INTO {table_name} (event_date, variation, total_new_conversation, unique_new_conversation_users, new_conversation_ratio, experiment_name)
+            SELECT
+                a.event_date,
+                b.variation_id AS variation,
+                COUNT(DISTINCT a.conversation_id) AS total_new_conversation,
+                COUNT(DISTINCT a.user_id) AS unique_new_conversation_users,
+                CASE
+                    WHEN COUNT(DISTINCT a.user_id) = 0 THEN 0
+                    ELSE ROUND(COUNT(DISTINCT a.conversation_id) * 1.0 / COUNT(DISTINCT a.user_id), 4)
+                END AS new_conversation_ratio,
+                '{experiment_name}' AS experiment_name
+            FROM flow_event_info.tbl_app_event_chat_send a
+            JOIN flow_wide_info.tbl_wide_experiment_assignment_hi b
+                ON a.user_id = b.user_id
+            WHERE b.experiment_id = '{experiment_name}'
+              AND a.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
+              AND a.event_date = '{current_date}'
 
-                conn.execute(batch_insert_query, {
-                    "experiment_name": experiment_name,
-                    "start_time": f"{date_str} 00:00:00",
-                    "end_time": f"{date_str} 23:59:59",
-                    "batch_index": batch_index
-                })
-                logging.info(f"✅ 日期 {date_str}，批次 {batch_index}/10 插入完成。")
+            GROUP BY a.event_date, b.variation_id
+            ORDER BY a.event_date, b.variation_id;
+            """
+            print(f"👉 正在插入日期：{current_date}")
+            conn.execute(text(batch_insert_query))
+        print(f"✅ 所有批次数据已插入到表 {table_name} 中。")
 
-            current_date += timedelta(days=1)
-
-    logging.info(f"✅ 所有数据插入完成，目标表：{table_name}")
-    return table_name
-
-
-# ============= 计算汇总并覆盖原表 =============
-def overwrite_new_conversation_table_with_summary(tag):
-    logging.info(f"📊 开始生成汇总数据，并覆盖到原表，标签：{tag}")
-
-    table_name = f"tbl_report_new_conversation_{tag}"
-    engine = get_db_connection()
-
-    summary_query = text(f"""
-    SELECT 
-        variation,
-        SUM(total_new_conversation) AS total_new_conversation,
-        SUM(unique_new_conversation_users) AS unique_new_conversation_users,
-        CASE 
-            WHEN SUM(unique_new_conversation_users) = 0 THEN 0
-            ELSE ROUND(SUM(total_new_conversation) / SUM(unique_new_conversation_users), 4)
-        END AS new_conversation_ratio,
-        MAX(experiment_name) AS experiment_name
-    FROM {table_name}
-    GROUP BY variation;
-    """)
-
-    summary_df = pd.read_sql(summary_query, engine)
-    summary_df.to_sql(table_name, engine, if_exists="replace", index=False)
-
-    logging.info(f"✅ 汇总数据已覆盖表：{table_name}")
+    # 查询结果
+    result_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY event_date, variation;", engine)
+    print("🚀 最终表数据:")
+    print(result_df)
 
 if __name__ == "__main__":
-    main("backend")
+    if len(sys.argv) > 1:
+        tag = sys.argv[1]
+    else:
+        tag = "trans_es"
+        print(f"⚠️ 未指定实验标签，默认使用：{tag}")
+    main(tag)

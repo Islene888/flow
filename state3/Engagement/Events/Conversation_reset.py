@@ -32,7 +32,7 @@ def main(tag):
     start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
     end_time_str   = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
-    # 仅用于外层过滤的首日和末日
+    # 用于外层过滤的首日和末日
     start_day_str = start_time.strftime("%Y-%m-%d")
     end_day_str   = end_time.strftime("%Y-%m-%d")
 
@@ -41,18 +41,18 @@ def main(tag):
     print(f"   首日：{start_day_str}，末日：{end_day_str}")
 
     engine = get_db_connection()
-    # 修改目标表名，将 edit 改为 continue
-    table_name = f"tbl_report_continue_{tag}"
+    # 修改目标表名，将 new_conversation 改为 conversation_reset
+    table_name = f"tbl_report_conversation_reset_{tag}"
 
-    # 建表（如表存在则覆盖），字段名称也改为 continue 相关
+    # 建表（如表存在则覆盖），字段名称做相应修改
     drop_table_query = f"DROP TABLE IF EXISTS {table_name};"
     create_table_query = f"""
     CREATE TABLE {table_name} (
         event_date VARCHAR(255),
         variation VARCHAR(255),
-        total_continue INT,
-        unique_continue_users INT,
-        continue_ratio DOUBLE,
+        total_conversation_reset INT,
+        unique_conversation_reset_users INT,
+        conversation_reset_ratio DOUBLE,
         experiment_name VARCHAR(255)
     );
     """
@@ -74,24 +74,23 @@ def main(tag):
         for d in range(1, delta_days):
             current_date = (start_date + timedelta(days=d)).strftime("%Y-%m-%d")
             batch_insert_query = f"""
-            INSERT INTO {table_name} (event_date, variation, total_continue, unique_continue_users, continue_ratio, experiment_name)
+            INSERT INTO {table_name} (event_date, variation, total_conversation_reset, unique_conversation_reset_users, conversation_reset_ratio, experiment_name)
             SELECT
                 a.event_date,
                 b.variation_id AS variation,
-                COUNT(DISTINCT a.event_id) AS total_continue,
-                COUNT(DISTINCT a.user_id) AS unique_continue_users,
+                COUNT(DISTINCT a.event_id) AS total_conversation_reset,
+                COUNT(DISTINCT a.user_id) AS unique_conversation_reset_users,
                 CASE
                     WHEN COUNT(DISTINCT a.user_id) = 0 THEN 0
                     ELSE ROUND(COUNT(DISTINCT a.event_id) * 1.0 / COUNT(DISTINCT a.user_id), 4)
-                END AS continue_ratio,
+                END AS conversation_reset_ratio,
                 '{experiment_name}' AS experiment_name
-            FROM flow_event_info.tbl_app_event_chat_send a
+            FROM flow_event_info.tbl_app_event_conversation_reset a
             JOIN flow_wide_info.tbl_wide_experiment_assignment_hi b
                 ON a.user_id = b.user_id
             WHERE b.experiment_id = '{experiment_name}'
               AND a.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
               AND a.event_date = '{current_date}'
-              AND a.Method = 'continue'
             GROUP BY a.event_date, b.variation_id
             ORDER BY a.event_date, b.variation_id;
             """

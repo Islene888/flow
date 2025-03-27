@@ -109,11 +109,11 @@ def fetch_and_save_experiment_data():
                     "control_group_key": 0
                 })
                 experiments_data.append({
-                    "experiment_name": "mobile-chat-vanilla-0303",
-                    "tags": "chat_0303",
-                    "phase_start_time": datetime(2025,3,3,8,13,24),
-                    "phase_end_time": datetime(2025,3,5,22,49,45),
-                    "number_of_variations": 7,
+                    "experiment_name": "chat-skip-translation-es",
+                    "tags": "trans_es",
+                    "phase_start_time": datetime(2025,3,21,0,00,00),
+                    "phase_end_time": datetime(2025,3,25,12,00,00),
+                    "number_of_variations": 2,
                     "control_group_key": 0
                 })
                 # 去重：使用 (experiment_name, tags) 组合作为唯一标识

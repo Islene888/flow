@@ -2,13 +2,11 @@ import urllib.parse
 import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
-
-from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
+from datetime import datetime
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
-# ============= 数据库连接 =============
 def get_db_connection():
     password = urllib.parse.quote_plus("flowgpt@2024.com")
     DATABASE_URL = f"mysql+pymysql://bigdata:{password}@3.135.224.186:9030/flow_ab_test?charset=utf8mb4"
@@ -17,195 +15,144 @@ def get_db_connection():
     return engine
 
 
-# ============= 插入订阅指标明细数据 =============
-def insert_subscribe_data(tag):
-    print(f"开始获取实验数据，标签：{tag}")
+def insert_subscribe_metrics_summary(tag):
+    print(f"开始获取实验汇总数据，标签: {tag}")
+    from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
     experiment_data = get_experiment_details_by_tag(tag)
     if not experiment_data:
         print(f"没有找到符合标签 '{tag}' 的实验数据！")
         return None
 
-    # 获取实验参数
     experiment_name = experiment_data['experiment_name']
-    start_time = experiment_data['phase_start_time']
-    end_time = experiment_data['phase_end_time']
-    print(f"实验名称：{experiment_name}，实验时间：{start_time} 至 {end_time}")
+    start_time = experiment_data['phase_start_time'].strftime("%Y-%m-%d")
+    end_time = experiment_data['phase_end_time'].strftime("%Y-%m-%d")
+    print(f"实验名称: {experiment_name}, 时间: {start_time} - {end_time}")
 
     engine = get_db_connection()
-    table_name = f"tbl_report_subscribe_{tag}"
+    table_name = f"tbl_report_subscribe_metrics_summary_{tag}"
 
-    # 创建目标表（如果不存在）并清空数据
     create_table_query = f"""
+    DROP TABLE IF EXISTS {table_name};
     CREATE TABLE IF NOT EXISTS {table_name} (
         variation VARCHAR(255),
-        total_active_users INT,
+        experiment_user_count INT,
         new_subscribe_users INT,
+        new_subscribe_events INT,
         new_subscribe_rate DOUBLE,
-        total_subscribe_revenue DOUBLE,
-        subscribe_ARPU DOUBLE,
-        renewal_users INT,
-        due_users INT,
+        subscribe_arpu DOUBLE,
         renewal_rate DOUBLE,
         experiment_tag VARCHAR(255)
     );
     """
-    truncate_query = f"TRUNCATE TABLE {table_name};"
 
     with engine.connect() as conn:
-        conn.execute(text("SET query_timeout = 30000;"))
-        conn.execute(text(create_table_query))
-        conn.execute(text(truncate_query))
-        print(f"目标表 {table_name} 数据已清空。")
+        for stmt in create_table_query.strip().split(';'):
+            if stmt.strip():
+                conn.execute(text(stmt))
 
-        # 插入订阅指标数据
         insert_query = f"""
-        INSERT INTO {table_name} (variation, total_active_users, new_subscribe_users, new_subscribe_rate, total_subscribe_revenue, subscribe_ARPU, renewal_users, due_users, renewal_rate, experiment_tag)
+        INSERT INTO {table_name}
         WITH 
         exp AS (
-          SELECT 
-            user_id, 
-            variation_id
+          SELECT DISTINCT user_id, variation_id
           FROM flow_wide_info.tbl_wide_experiment_assignment_hi
           WHERE experiment_id = '{experiment_name}'
             AND event_date BETWEEN '{start_time}' AND '{end_time}'
         ),
-        active_users AS (
-          SELECT 
-            variation_id, 
-            COUNT(DISTINCT user_id) AS total_active_users
-          FROM flow_wide_info.tbl_wide_experiment_assignment_hi
-          WHERE experiment_id = '{experiment_name}'
-            AND event_date BETWEEN '{start_time}' AND '{end_time}'
+        experiment_users AS (
+          SELECT variation_id, COUNT(DISTINCT user_id) AS experiment_user_count
+          FROM exp
           GROUP BY variation_id
         ),
-        new_subscribe AS (
-          SELECT 
-            e.variation_id,
-            COUNT(DISTINCT s.user_id) AS new_subscribe_users
-          FROM flow_event_info.tbl_app_event_subscribe s
-          JOIN exp e ON s.user_id = e.user_id
-          WHERE s.new_subscription = TRUE
-            AND s.sub_date BETWEEN '{start_time}' AND '{end_time}'
-          GROUP BY e.variation_id
+        platform_subscribe AS (
+          SELECT g.user_id AS user_id, g.sub_date AS sub_date, 
+                 g.expiration_date AS expiration_date,
+                 'android' AS platform, 
+                 g.notification_type AS notification_type, 
+                 e.variation_id
+          FROM flow_wide_info.tbl_wide_business_subscribe_google_detail g
+          JOIN exp e ON g.user_id = e.user_id
+          WHERE g.notification_type IN (2, 4)
+            AND g.sub_date BETWEEN '{start_time}' AND '{end_time} 23:59:59'
+
+          UNION ALL
+
+          SELECT a.user_id AS user_id, a.sub_date AS sub_date,
+                 a.expiration_date AS expiration_date,
+                 'ios' AS platform, 
+                 a.notification_type AS notification_type, 
+                 e.variation_id
+          FROM flow_wide_info.tbl_wide_business_subscribe_apple_detail a
+          JOIN exp e ON a.user_id = e.user_id
+          WHERE a.notification_type IN ('SUBSCRIBED', 'DID_RENEW', 'DID_CHANGE_RENEWAL_PREF')
+            AND a.sub_date BETWEEN '{start_time}' AND '{end_time} 23:59:59'
+        ),
+        revenue_table AS (
+          SELECT user_id, revenue
+          FROM flow_event_info.tbl_app_event_subscribe
+          WHERE event_date BETWEEN '{start_time}' AND '{end_time}'
+        ),
+        platform_with_revenue AS (
+          SELECT ps.variation_id, ps.user_id, ps.notification_type, ps.expiration_date, COALESCE(r.revenue, 0) AS revenue
+          FROM platform_subscribe ps
+          LEFT JOIN revenue_table r ON ps.user_id = r.user_id
+        ),
+        new_subscribe_events AS (
+          SELECT variation_id, COUNT(*) AS new_subscribe_events
+          FROM platform_with_revenue
+          WHERE notification_type IN (4, 'SUBSCRIBED')
+          GROUP BY variation_id
+        ),
+        new_subscribe_users AS (
+          SELECT variation_id, COUNT(DISTINCT user_id) AS new_subscribe_users
+          FROM platform_with_revenue
+          WHERE notification_type IN (4, 'SUBSCRIBED')
+          GROUP BY variation_id
+        ),
+        active_users AS (
+          SELECT variation_id, COUNT(DISTINCT user_id) AS active_user_count
+          FROM exp
+          GROUP BY variation_id
         ),
         subscribe_revenue AS (
-          SELECT 
-            e.variation_id,
-            SUM(s.revenue) AS total_subscribe_revenue
-          FROM flow_event_info.tbl_app_event_subscribe s
-          JOIN exp e ON s.user_id = e.user_id
-          WHERE s.sub_date BETWEEN '{start_time}' AND '{end_time}'
-          GROUP BY e.variation_id
+          SELECT variation_id, SUM(revenue) AS total_subscribe_revenue
+          FROM platform_with_revenue
+          GROUP BY variation_id
         ),
         renewal AS (
-          SELECT 
-            e.variation_id,
-            COUNT(DISTINCT s.user_id) AS renewal_users
-          FROM flow_event_info.tbl_app_event_subscribe s
-          JOIN exp e ON s.user_id = e.user_id
-          WHERE s.new_subscription = FALSE
-            AND s.sub_date BETWEEN '{start_time}' AND '{end_time}'
-          GROUP BY e.variation_id
+          SELECT variation_id, COUNT(DISTINCT user_id) AS renewal_count
+          FROM platform_with_revenue
+          WHERE notification_type IN (2, 'DID_RENEW')
+          GROUP BY variation_id
         ),
         due_subscriptions AS (
-          SELECT 
-            e.variation_id,
-            COUNT(DISTINCT s.user_id) AS due_users
-          FROM flow_event_info.tbl_app_event_subscribe s
-          JOIN exp e ON s.user_id = e.user_id
-          WHERE s.expiration_date BETWEEN '{start_time}' AND '{end_time}'
-          GROUP BY e.variation_id
+          SELECT variation_id, COUNT(DISTINCT user_id) AS due_count
+          FROM platform_with_revenue
+          WHERE expiration_date BETWEEN '{start_time}' AND '{end_time}'
+          GROUP BY variation_id
         )
         SELECT
-          /*+ SET_VAR(query_timeout = 30000) */ 
           a.variation_id,
-          a.total_active_users,
-          COALESCE(n.new_subscribe_users, 0) AS new_subscribe_users,
-          ROUND(COALESCE(n.new_subscribe_users, 0) / a.total_active_users, 4) AS new_subscribe_rate,
-          COALESCE(sr.total_subscribe_revenue, 0) AS total_subscribe_revenue,
-          ROUND(COALESCE(sr.total_subscribe_revenue, 0) / a.total_active_users, 4) AS subscribe_ARPU,
-          COALESCE(r.renewal_users, 0) AS renewal_users,
-          COALESCE(d.due_users, 0) AS due_users,
-          CASE WHEN COALESCE(d.due_users, 0) = 0 THEN 0 
-               ELSE ROUND(COALESCE(r.renewal_users, 0) / d.due_users, 4)
-          END AS renewal_rate,
+          a.experiment_user_count,
+          COALESCE(nu.new_subscribe_users, 0) AS new_subscribe_users,
+          COALESCE(ne.new_subscribe_events, 0) AS new_subscribe_events,
+          ROUND(COALESCE(ne.new_subscribe_events, 0) / NULLIF(a.experiment_user_count, 0), 4) AS new_subscribe_rate,
+          ROUND(COALESCE(sr.total_subscribe_revenue, 0) / NULLIF(au.active_user_count, 0), 4) AS subscribe_arpu,
+          CASE WHEN COALESCE(d.due_count, 0) = 0 THEN 0 
+               ELSE ROUND(COALESCE(r.renewal_count, 0) / d.due_count, 4) END AS renewal_rate,
           '{tag}' AS experiment_tag
-        FROM active_users a
-        LEFT JOIN new_subscribe n ON a.variation_id = n.variation_id
+        FROM experiment_users a
+        LEFT JOIN new_subscribe_users nu ON a.variation_id = nu.variation_id
+        LEFT JOIN new_subscribe_events ne ON a.variation_id = ne.variation_id
         LEFT JOIN subscribe_revenue sr ON a.variation_id = sr.variation_id
+        LEFT JOIN active_users au ON a.variation_id = au.variation_id
         LEFT JOIN renewal r ON a.variation_id = r.variation_id
         LEFT JOIN due_subscriptions d ON a.variation_id = d.variation_id;
         """
+
         conn.execute(text(insert_query))
-        print(f"订阅指标数据插入完成，目标表：{table_name}")
-    return table_name
-
-
-# ============= 汇总并覆盖目标表 =============
-def overwrite_subscribe_table_with_summary(tag):
-    print(f"开始生成订阅指标汇总数据，并覆盖到原表，标签：{tag}")
-    table_name = f"tbl_report_subscribe_{tag}"
-
-    summary_query = f"""
-    SELECT 
-        variation,
-        SUM(total_active_users) AS total_active_users,
-        SUM(new_subscribe_users) AS new_subscribe_users,
-        ROUND(SUM(new_subscribe_users) / SUM(total_active_users), 4) AS new_subscribe_rate,
-        SUM(total_subscribe_revenue) AS total_subscribe_revenue,
-        ROUND(SUM(total_subscribe_revenue) / SUM(total_active_users), 4) AS subscribe_ARPU,
-        SUM(renewal_users) AS renewal_users,
-        SUM(due_users) AS due_users,
-        ROUND(SUM(renewal_users) / SUM(due_users), 4) AS renewal_rate,
-        MAX(experiment_tag) AS experiment_tag
-    FROM {table_name}
-    WHERE variation != 'null'
-    GROUP BY variation;
-    """
-    engine = get_db_connection()
-    summary_df = pd.read_sql(summary_query, engine)
-
-    create_table_query = f"""
-    CREATE TABLE IF NOT EXISTS {table_name} (
-        variation VARCHAR(255),
-        total_active_users INT,
-        new_subscribe_users INT,
-        new_subscribe_rate DOUBLE,
-        total_subscribe_revenue DOUBLE,
-        subscribe_ARPU DOUBLE,
-        renewal_users INT,
-        due_users INT,
-        renewal_rate DOUBLE,
-        experiment_tag VARCHAR(255)
-    );
-    """
-
-    with engine.connect() as conn:
-        conn.execute(text("SET query_timeout = 30000;"))
-        conn.execute(text(create_table_query))
-        conn.execute(text(f"TRUNCATE TABLE {table_name};"))
-
-        for _, row in summary_df.iterrows():
-            insert_query = f"""
-            INSERT INTO {table_name} (variation, total_active_users, new_subscribe_users, new_subscribe_rate, total_subscribe_revenue, subscribe_ARPU, renewal_users, due_users, renewal_rate, experiment_tag)
-            VALUES ('{row['variation']}', {row['total_active_users']}, {row['new_subscribe_users']}, {row['new_subscribe_rate']},
-                    {row['total_subscribe_revenue']}, {row['subscribe_ARPU']}, {row['renewal_users']}, {row['due_users']}, {row['renewal_rate']},
-                    '{row['experiment_tag']}');
-            """
-            conn.execute(text(insert_query))
-    print(f"订阅指标汇总数据已覆盖表：{table_name}")
-
-
-# ============= 主流程 =============
-def main(tag):
-    print("主流程开始执行。")
-    table_name = insert_subscribe_data(tag)
-    if table_name is None:
-        print("数据写入或建表失败！")
-        return
-    overwrite_subscribe_table_with_summary(tag)
-    print("主流程执行完毕。")
+        print(f"汇总订阅指标数据已写入表：{table_name}")
 
 
 if __name__ == "__main__":
-    main("backend")
+    insert_subscribe_metrics_summary("trans_es")

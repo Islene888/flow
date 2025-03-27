@@ -2,7 +2,6 @@ import urllib.parse
 import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
-
 from state3.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -43,7 +42,7 @@ def insert_recharge_data(tag):
         recharge_ARPU DOUBLE,
         recharge_conversion_rate DOUBLE,
         recharge_frequency DOUBLE,
-        experiment_tag VARCHAR(255)  -- 这里修改 experiment_name 为 experiment_tag
+        experiment_tag VARCHAR(255)
     );
     """
     truncate_query = f"TRUNCATE TABLE {table_name};"
@@ -54,12 +53,11 @@ def insert_recharge_data(tag):
         conn.execute(text(truncate_query))
         print(f"目标表 {table_name} 数据已清空。")
 
-        # 插入充值指标数据：按照实验期间数据，统计活跃用户和充值指标
         insert_query = f"""
         INSERT INTO {table_name} (variation, total_active_users, total_recharge_revenue, recharge_ARPU, recharge_conversion_rate, recharge_frequency, experiment_tag)
         WITH 
         exp AS (
-          SELECT 
+          SELECT DISTINCT
             user_id, 
             variation_id
           FROM flow_wide_info.tbl_wide_experiment_assignment_hi
@@ -78,7 +76,8 @@ def insert_recharge_data(tag):
             e.variation_id,
             COUNT(*) AS total_recharge_orders,
             COUNT(DISTINCT p.user_id) AS recharge_user_count,
-            SUM(p.revenue) AS total_recharge_revenue
+            SUM(p.revenue) AS total_recharge_revenue,
+            COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT p.user_id), 0) AS recharge_frequency
           FROM flow_event_info.tbl_app_event_currency_purchase p
           JOIN exp e 
             ON p.user_id = e.user_id
@@ -91,8 +90,8 @@ def insert_recharge_data(tag):
           r.total_recharge_revenue,
           ROUND(r.total_recharge_revenue / a.total_active_users, 4) AS recharge_ARPU,
           ROUND(r.recharge_user_count * 1.0 / a.total_active_users, 4) AS recharge_conversion_rate,
-          ROUND(r.total_recharge_orders * 1.0 / r.recharge_user_count, 4) AS recharge_frequency,
-          '{tag}' AS experiment_tag  -- 这里修改 experiment_name 为 tag
+          ROUND(r.recharge_frequency, 4) AS recharge_frequency,
+          '{tag}' AS experiment_tag
         FROM active_users a
         LEFT JOIN recharge_stats r 
           ON a.variation_id = r.variation_id;
@@ -131,7 +130,7 @@ def overwrite_recharge_table_with_summary(tag):
         recharge_ARPU DOUBLE,
         recharge_conversion_rate DOUBLE,
         recharge_frequency DOUBLE,
-        experiment_tag VARCHAR(255)  -- 这里修改 experiment_name 为 experiment_tag
+        experiment_tag VARCHAR(255)
     );
     """
 
@@ -161,4 +160,4 @@ def main(tag):
 
 
 if __name__ == "__main__":
-    main("backend")
+    main("trans_es")

@@ -41,18 +41,18 @@ def main(tag):
     print(f"   首日：{start_day_str}，末日：{end_day_str}")
 
     engine = get_db_connection()
-    # 修改目标表名，将 edit 改为 continue
-    table_name = f"tbl_report_continue_{tag}"
+    # 修改目标表名：将 chat 改为 edit
+    table_name = f"tbl_report_edit_{tag}"
 
-    # 建表（如表存在则覆盖），字段名称也改为 continue 相关
+    # 建表（如表存在则覆盖），字段名称也改为 edit
     drop_table_query = f"DROP TABLE IF EXISTS {table_name};"
     create_table_query = f"""
     CREATE TABLE {table_name} (
         event_date VARCHAR(255),
         variation VARCHAR(255),
-        total_continue INT,
-        unique_continue_users INT,
-        continue_ratio DOUBLE,
+        total_edit INT,
+        unique_edit_users INT,
+        edit_ratio DOUBLE,
         experiment_name VARCHAR(255)
     );
     """
@@ -68,22 +68,22 @@ def main(tag):
     end_date = datetime.strptime(end_day_str, "%Y-%m-%d")
     delta_days = (end_date - start_date).days
 
-    # 遍历首日之后到末日前的每一天，分批插入数据
+    # 遍历首日之后到末日前的每一天，分批插入
     with engine.connect() as conn:
         conn.execute(text("SET query_timeout = 30000;"))
         for d in range(1, delta_days):
             current_date = (start_date + timedelta(days=d)).strftime("%Y-%m-%d")
             batch_insert_query = f"""
-            INSERT INTO {table_name} (event_date, variation, total_continue, unique_continue_users, continue_ratio, experiment_name)
+            INSERT INTO {table_name} (event_date, variation, total_edit, unique_edit_users, edit_ratio, experiment_name)
             SELECT
                 a.event_date,
                 b.variation_id AS variation,
-                COUNT(DISTINCT a.event_id) AS total_continue,
-                COUNT(DISTINCT a.user_id) AS unique_continue_users,
+                COUNT(DISTINCT a.event_id) AS total_edit,
+                COUNT(DISTINCT a.user_id) AS unique_edit_users,
                 CASE
                     WHEN COUNT(DISTINCT a.user_id) = 0 THEN 0
                     ELSE ROUND(COUNT(DISTINCT a.event_id) * 1.0 / COUNT(DISTINCT a.user_id), 4)
-                END AS continue_ratio,
+                END AS edit_ratio,
                 '{experiment_name}' AS experiment_name
             FROM flow_event_info.tbl_app_event_chat_send a
             JOIN flow_wide_info.tbl_wide_experiment_assignment_hi b
@@ -91,7 +91,7 @@ def main(tag):
             WHERE b.experiment_id = '{experiment_name}'
               AND a.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
               AND a.event_date = '{current_date}'
-              AND a.Method = 'continue'
+              AND a.Method = 'edit'
             GROUP BY a.event_date, b.variation_id
             ORDER BY a.event_date, b.variation_id;
             """
