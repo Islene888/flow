@@ -5,7 +5,7 @@ import warnings
 from datetime import datetime, timedelta
 import sys
 
-from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
+from state3.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -72,11 +72,12 @@ def main(tag):
         conn.execute(text("SET query_timeout = 30000;"))
         for d in range(1, delta_days):
             current_date = (start_date + timedelta(days=d)).strftime("%Y-%m-%d")
+
             batch_insert_query = f"""
             INSERT INTO {table_name} (event_date, variation, total_chat, unique_chat_users, chat_ratio, experiment_name)
             SELECT
                 a.event_date,
-                b.variation_id AS variation,
+                uv.variation_id AS variation,
                 COUNT(DISTINCT a.event_id) AS total_chat,
                 COUNT(DISTINCT a.user_id) AS unique_chat_users,
                 CASE
@@ -85,15 +86,18 @@ def main(tag):
                 END AS chat_ratio,
                 '{experiment_name}' AS experiment_name
             FROM flow_event_info.tbl_app_event_chat_send a
-            JOIN flow_wide_info.tbl_wide_experiment_assignment_hi b
-                ON a.user_id = b.user_id
-            WHERE b.experiment_id = '{experiment_name}'
-              AND a.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
-              AND a.event_date = '{current_date}'
+            JOIN (
+                SELECT user_id, MIN(variation_id) AS variation_id
+                FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+                WHERE experiment_id = '{experiment_name}'
+                GROUP BY user_id
+            ) uv ON a.user_id = uv.user_id
+            WHERE a.event_date = '{current_date}'
               AND a.Method != 'regenerate'
-            GROUP BY a.event_date, b.variation_id
-            ORDER BY a.event_date, b.variation_id;
+            GROUP BY a.event_date, uv.variation_id
+            ORDER BY a.event_date, uv.variation_id;
             """
+
             print(f"👉 正在插入日期：{current_date}")
             conn.execute(text(batch_insert_query))
         print(f"✅ 所有批次数据已插入到表 {table_name} 中。")

@@ -98,49 +98,79 @@ def insert_experiment_data_to_wide_active_table(tag):
             insert_query = f"""            
                 INSERT INTO {table_name} (dt, variation, new_users, d1, d3, d7, d15, total_assigned)
                 SELECT
-                /*+ SET_VAR (query_timeout = 30000) */
-                base.active_date AS dt,
-                e.variation,
-                COUNT(DISTINCT base.user_id) AS base_active_users,
-                COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, base.active_date) = 1 THEN a.user_id END) AS d1,
-                COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, base.active_date) = 3 THEN a.user_id END) AS d3,
-                COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, base.active_date) = 7 THEN a.user_id END) AS d7,
-                COUNT(DISTINCT CASE WHEN DATEDIFF(a.active_date, base.active_date) = 15 THEN a.user_id END) AS d15,
-                MAX(COALESCE(ta.total_assigned, 0)) AS total_assigned
-            FROM flow_wide_info.tbl_wide_active_user_app_info base
-            LEFT JOIN flow_wide_info.tbl_wide_active_user_app_info a
-              ON base.user_id = a.user_id
-                 AND a.active_date BETWEEN '{start_time}' AND '{end_time}'
-            LEFT JOIN (
-                -- 实验分组信息
-                SELECT
-                    user_id,
-                    CAST(variation_id AS CHAR) AS variation
-                FROM flow_wide_info.tbl_wide_experiment_assignment_hi
-                WHERE experiment_id = '{experiment_name}'
-                  AND timestamp_assigned BETWEEN '{start_time}' AND '{end_time}'
-            ) e ON base.user_id = e.user_id
-            LEFT JOIN (
-                -- 每天每个分组的分配用户数统计
-                SELECT 
-                    DATE(timestamp_assigned) AS assign_date,
-                    CAST(variation_id AS CHAR) AS variation,
-                    COUNT(DISTINCT user_id) AS total_assigned
-                FROM flow_wide_info.tbl_wide_experiment_assignment_hi
-                WHERE experiment_id = '{experiment_name}'
-                GROUP BY DATE(timestamp_assigned), CAST(variation_id AS CHAR)
-            ) ta ON ta.assign_date = base.active_date
-                  AND ta.variation = e.variation
-            WHERE base.active_date BETWEEN '{start_time}' AND '{end_time}'
-              AND base.keep_alive_flag = 1
-              AND base.user_id IS NOT NULL
-              AND base.user_id != ''
-              AND e.variation IS NOT NULL
-              AND MOD(CRC32(base.user_id), {batch_count}) = {i}
-            GROUP BY base.active_date, e.variation
-            ORDER BY base.active_date, e.variation;
-
+                    base.active_date AS dt,
+                    e.variation,
+                    COUNT(DISTINCT base.user_id) AS new_users,
+                    COUNT(DISTINCT d1.user_id) AS d1,
+                    COUNT(DISTINCT d3.user_id) AS d3,
+                    COUNT(DISTINCT d7.user_id) AS d7,
+                    COUNT(DISTINCT d15.user_id) AS d15,
+                    MAX(COALESCE(ta.total_assigned, 0)) AS total_assigned
+                FROM (
+                    SELECT user_id, active_date
+                    FROM flow_wide_info.tbl_wide_active_user_app_info
+                    WHERE active_date BETWEEN '{start_time}' AND '{end_time}'
+                      AND keep_alive_flag = 1
+                      AND user_id IS NOT NULL AND user_id != ''
+                      AND MOD(CRC32(user_id), {batch_count}) = {i}
+                    GROUP BY user_id, active_date
+                ) base
+                LEFT JOIN (
+                    -- 保留每个 user_id 的唯一实验分配记录（最早时间）
+                    SELECT user_id, variation
+                    FROM (
+                        SELECT 
+                            user_id, 
+                            CAST(variation_id AS CHAR) AS variation,
+                            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp_assigned ASC) AS rn
+                        FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+                        WHERE experiment_id = '{experiment_name}'
+                          AND timestamp_assigned BETWEEN '{start_time}' AND '{end_time}'
+                    ) t WHERE rn = 1
+                ) e ON base.user_id = e.user_id
+                LEFT JOIN (
+                    -- d1 留存行为
+                    SELECT user_id, active_date
+                    FROM flow_wide_info.tbl_wide_active_user_app_info
+                    WHERE active_date BETWEEN DATE_ADD('{start_time}', INTERVAL 1 DAY) AND DATE_ADD('{end_time}', INTERVAL 15 DAY)
+                      AND keep_alive_flag = 1
+                    GROUP BY user_id, active_date
+                ) d1 ON base.user_id = d1.user_id AND DATEDIFF(d1.active_date, base.active_date) = 1
+                LEFT JOIN (
+                    SELECT user_id, active_date
+                    FROM flow_wide_info.tbl_wide_active_user_app_info
+                    WHERE active_date BETWEEN DATE_ADD('{start_time}', INTERVAL 3 DAY) AND DATE_ADD('{end_time}', INTERVAL 15 DAY)
+                      AND keep_alive_flag = 1
+                    GROUP BY user_id, active_date
+                ) d3 ON base.user_id = d3.user_id AND DATEDIFF(d3.active_date, base.active_date) = 3
+                LEFT JOIN (
+                    SELECT user_id, active_date
+                    FROM flow_wide_info.tbl_wide_active_user_app_info
+                    WHERE active_date BETWEEN DATE_ADD('{start_time}', INTERVAL 7 DAY) AND DATE_ADD('{end_time}', INTERVAL 15 DAY)
+                      AND keep_alive_flag = 1
+                    GROUP BY user_id, active_date
+                ) d7 ON base.user_id = d7.user_id AND DATEDIFF(d7.active_date, base.active_date) = 7
+                LEFT JOIN (
+                    SELECT user_id, active_date
+                    FROM flow_wide_info.tbl_wide_active_user_app_info
+                    WHERE active_date BETWEEN DATE_ADD('{start_time}', INTERVAL 15 DAY) AND DATE_ADD('{end_time}', INTERVAL 15 DAY)
+                      AND keep_alive_flag = 1
+                    GROUP BY user_id, active_date
+                ) d15 ON base.user_id = d15.user_id AND DATEDIFF(d15.active_date, base.active_date) = 15
+                LEFT JOIN (
+                    SELECT 
+                        DATE(timestamp_assigned) AS assign_date,
+                        CAST(variation_id AS CHAR) AS variation,
+                        COUNT(DISTINCT user_id) AS total_assigned
+                    FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+                    WHERE experiment_id = '{experiment_name}'
+                    GROUP BY DATE(timestamp_assigned), CAST(variation_id AS CHAR)
+                ) ta ON ta.assign_date = base.active_date AND ta.variation = e.variation
+                WHERE e.variation IS NOT NULL
+                GROUP BY base.active_date, e.variation
+                ORDER BY base.active_date, e.variation;
             """
+
             try:
                 with engine.connect() as conn:
                     conn.execute(text(insert_query))
@@ -207,5 +237,5 @@ def insert_experiment_data_to_wide_active_table(tag):
 
 # 如果需要运行，可调用函数，例如：
 if __name__ == "__main__":
-    tag = "recommendation_mobil"  # 根据实际标签修改
-    insert_experiment_data_to_wide_table(tag)
+    tag = "trans_pt"  # 根据实际标签修改
+    insert_experiment_data_to_wide_active_table(tag)

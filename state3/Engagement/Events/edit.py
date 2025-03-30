@@ -9,6 +9,7 @@ from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experime
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+
 def get_db_connection():
     password = urllib.parse.quote_plus("flowgpt@2024.com")
     DATABASE_URL = f"mysql+pymysql://bigdata:{password}@3.135.224.186:9030/flow_ab_test?charset=utf8mb4"
@@ -16,10 +17,10 @@ def get_db_connection():
     print("✅ 数据库连接已建立。")
     return engine
 
-def main(tag):
-    print(f"🚀 开始获取实验数据，标签：{tag}")
 
-    # 获取实验信息
+def main(tag):
+    print(f"🚀 开始获取实验 edit 数据（按天按组），标签：{tag}")
+
     experiment_data = get_experiment_details_by_tag(tag)
     if not experiment_data:
         print(f"⚠️ 没有找到符合标签 '{tag}' 的实验数据！")
@@ -27,56 +28,47 @@ def main(tag):
 
     experiment_name = experiment_data['experiment_name']
     start_time = experiment_data['phase_start_time']
-    end_time   = experiment_data['phase_end_time']
+    end_time = experiment_data['phase_end_time']
 
-    start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-    end_time_str   = end_time.strftime("%Y-%m-%d %H:%M:%S")
-
-    # 仅用于外层过滤的首日和末日
     start_day_str = start_time.strftime("%Y-%m-%d")
-    end_day_str   = end_time.strftime("%Y-%m-%d")
+    end_day_str = end_time.strftime("%Y-%m-%d")
 
     print(f"📝 实验名称：{experiment_name}")
-    print(f"⏰ 计算时间范围：{start_time_str} ~ {end_time_str}")
-    print(f"   首日：{start_day_str}，末日：{end_day_str}")
+    print(f"⏰ 实验时间范围：{start_day_str} ~ {end_day_str}")
 
     engine = get_db_connection()
-    # 修改目标表名：将 chat 改为 edit
-    table_name = f"tbl_report_edit_{tag}"
+    table_name = f"tbl_report_edit_daily_{tag}"
 
-    # 建表（如表存在则覆盖），字段名称也改为 edit
+    # 创建表（包含中文注释）
     drop_table_query = f"DROP TABLE IF EXISTS {table_name};"
     create_table_query = f"""
     CREATE TABLE {table_name} (
-        event_date VARCHAR(255),
-        variation VARCHAR(255),
-        total_edit INT,
-        unique_edit_users INT,
-        edit_ratio DOUBLE,
-        experiment_name VARCHAR(255)
+        event_date DATE COMMENT '日期',
+        variation VARCHAR(255) COMMENT '实验分组',
+        total_edit INT COMMENT '编辑事件数',
+        unique_edit_users INT COMMENT '活跃编辑用户数',
+        edit_ratio DOUBLE COMMENT '人均编辑次数',
+        experiment_name VARCHAR(255) COMMENT '实验名称'
     );
     """
-    # 执行建表操作
+
     with engine.connect() as conn:
         conn.execute(text("SET query_timeout = 30000;"))
         conn.execute(text(drop_table_query))
         conn.execute(text(create_table_query))
         print(f"✅ 表 {table_name} 已创建。")
 
-    # 将开始和结束日期转换为 datetime 对象，并计算中间日期（不包含首日和末日）
-    start_date = datetime.strptime(start_day_str, "%Y-%m-%d")
-    end_date = datetime.strptime(end_day_str, "%Y-%m-%d")
-    delta_days = (end_date - start_date).days
+        # 遍历每天插入数据（排除首日和末日）
+        start_date = datetime.strptime(start_day_str, "%Y-%m-%d")
+        end_date = datetime.strptime(end_day_str, "%Y-%m-%d")
+        delta_days = (end_date - start_date).days
 
-    # 遍历首日之后到末日前的每一天，分批插入
-    with engine.connect() as conn:
-        conn.execute(text("SET query_timeout = 30000;"))
         for d in range(1, delta_days):
             current_date = (start_date + timedelta(days=d)).strftime("%Y-%m-%d")
-            batch_insert_query = f"""
+            insert_query = f"""
             INSERT INTO {table_name} (event_date, variation, total_edit, unique_edit_users, edit_ratio, experiment_name)
             SELECT
-                a.event_date,
+                '{current_date}' AS event_date,
                 b.variation_id AS variation,
                 COUNT(DISTINCT a.event_id) AS total_edit,
                 COUNT(DISTINCT a.user_id) AS unique_edit_users,
@@ -87,27 +79,39 @@ def main(tag):
                 '{experiment_name}' AS experiment_name
             FROM flow_event_info.tbl_app_event_chat_send a
             JOIN flow_wide_info.tbl_wide_experiment_assignment_hi b
-                ON a.user_id = b.user_id
+              ON a.user_id = b.user_id
             WHERE b.experiment_id = '{experiment_name}'
-              AND a.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
               AND a.event_date = '{current_date}'
               AND a.Method = 'edit'
-            GROUP BY a.event_date, b.variation_id
-            ORDER BY a.event_date, b.variation_id;
+            GROUP BY b.variation_id;
             """
-            print(f"👉 正在插入日期：{current_date}")
-            conn.execute(text(batch_insert_query))
-        print(f"✅ 所有批次数据已插入到表 {table_name} 中。")
+            print(f"👉 正在处理日期：{current_date}")
+            conn.execute(text(insert_query))
 
-    # 查询结果
-    result_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY event_date, variation;", engine)
-    print("🚀 最终表数据:")
+        print(f"✅ 所有每日 edit 数据已插入表 {table_name}。")
+
+    # 加载结果并排序展示
+    final_query = f"""
+    SELECT 
+        event_date AS `日期`,
+        variation AS `实验分组`,
+        total_edit AS `编辑事件数`,
+        unique_edit_users AS `活跃编辑用户数`,
+        edit_ratio AS `人均编辑次数`,
+        experiment_name AS `实验名称`
+    FROM {table_name}
+    ORDER BY event_date, variation;
+    """
+
+    result_df = pd.read_sql(final_query, engine)
+    print("🚀 最终每日 Edit 数据:")
     print(result_df)
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         tag = sys.argv[1]
     else:
-        tag = "trans_es"
+        tag = "trans_pt"
         print(f"⚠️ 未指定实验标签，默认使用：{tag}")
     main(tag)

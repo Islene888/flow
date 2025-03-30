@@ -28,21 +28,22 @@ def main(tag):
     start_time = experiment_data['phase_start_time']
     end_time   = experiment_data['phase_end_time']
 
+    start_day_str = start_time.strftime("%Y-%m-%d")
+    end_day_str   = end_time.strftime("%Y-%m-%d")
     start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
     end_time_str   = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
-    start_day = start_time.strftime("%Y-%m-%d")
-    end_day   = end_time.strftime("%Y-%m-%d")
-
     print(f"📝 实验名称：{experiment_name}")
     print(f"⏰ 计算时间范围：{start_time_str} ~ {end_time_str}")
-    print(f"   首日：{start_day}，末日：{end_day}")
+    print(f"   首日：{start_day_str}，末日：{end_day_str}")
 
     engine = get_db_connection()
     table_name = f"tbl_report_view_{tag}"
 
+    # 建表（如表存在则覆盖）
+    drop_table_query = f"DROP TABLE IF EXISTS {table_name};"
     create_table_query = f"""
-    CREATE TABLE IF NOT EXISTS {table_name} (
+    CREATE TABLE {table_name} (
         event_date VARCHAR(255),
         variation VARCHAR(255),
         total_view INT,
@@ -52,49 +53,46 @@ def main(tag):
     );
     """
 
-    truncate_query = f"TRUNCATE TABLE {table_name};"
-
-    # -- 这里使用子查询来实现先计算再过滤
-    insert_query = f"""
-    INSERT INTO {table_name} (event_date, variation, total_view, unique_view_users, view_ratio, experiment_name)
-    SELECT 
-        raw.event_date,
-        raw.variation,
-        raw.total_view,
-        raw.unique_view_users,
-        raw.view_ratio,
-        '{experiment_name}' AS experiment_name
-    FROM (
-        SELECT /*+ SET_VAR(query_timeout = 30000) */
-            a.event_date,
-            a.variation_id AS variation,
-            COUNT(DISTINCT f.event_id) AS total_view,
-            COUNT(DISTINCT f.user_id) AS unique_view_users,
-            CASE 
-                WHEN COUNT(DISTINCT f.user_id) = 0 THEN 0 
-                ELSE ROUND(COUNT(DISTINCT f.event_id) * 1.0 / COUNT(DISTINCT f.user_id), 4)
-            END AS view_ratio
-        FROM flow_event_info.tbl_app_event_bot_view f
-        JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
-            ON f.user_id = a.user_id
-        WHERE a.experiment_id = '{experiment_name}'
-          AND f.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
-        GROUP BY a.event_date, a.variation_id
-        ORDER BY a.event_date, a.variation_id
-    ) AS raw
-    WHERE raw.event_date NOT IN ('{start_day}', '{end_day}');
-    """
-
     with engine.connect() as conn:
         conn.execute(text("SET query_timeout = 30000;"))
+        conn.execute(text(drop_table_query))
         conn.execute(text(create_table_query))
-        conn.execute(text(truncate_query))
-        print(f"✅ 表 {table_name} 已创建并清空。")
+        print(f"✅ 表 {table_name} 已创建。")
 
-        conn.execute(text(insert_query))
-        print(f"✅ 已插入过滤后的统计结果到表 {table_name} 中。")
+        # 计算日期区间（不包含首日和末日）
+        start_date = datetime.strptime(start_day_str, "%Y-%m-%d")
+        end_date = datetime.strptime(end_day_str, "%Y-%m-%d")
+        delta_days = (end_date - start_date).days
 
-    # -- 查看结果
+        for d in range(1, delta_days):  # 排除首尾
+            current_date = (start_date + timedelta(days=d)).strftime("%Y-%m-%d")
+
+            daily_insert_query = f"""
+            INSERT INTO {table_name} (event_date, variation, total_view, unique_view_users, view_ratio, experiment_name)
+            SELECT
+                '{current_date}' AS event_date,
+                a.variation_id AS variation,
+                COUNT(DISTINCT f.event_id) AS total_view,
+                COUNT(DISTINCT f.user_id) AS unique_view_users,
+                CASE 
+                    WHEN COUNT(DISTINCT f.user_id) = 0 THEN 0
+                    ELSE ROUND(COUNT(DISTINCT f.event_id) * 1.0 / COUNT(DISTINCT f.user_id), 4)
+                END AS view_ratio,
+                '{experiment_name}' AS experiment_name
+            FROM flow_event_info.tbl_app_event_bot_view f
+            JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
+                ON f.user_id = a.user_id
+            WHERE a.experiment_id = '{experiment_name}'
+              AND f.event_date = '{current_date}'
+            GROUP BY a.variation_id;
+            """
+
+            print(f"👉 正在插入日期：{current_date}")
+            conn.execute(text(daily_insert_query))
+
+        print(f"✅ 所有分日数据已插入表 {table_name}。")
+
+    # 查询结果
     result_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY event_date, variation;", engine)
     print("🚀 最终表数据（不含首尾天）:")
     print(result_df)
@@ -103,6 +101,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         tag = sys.argv[1]
     else:
-        tag = "trans_es"
+        tag = "recommendation_mobile"
         print(f"⚠️ 未指定实验标签，默认使用：{tag}")
     main(tag)

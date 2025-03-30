@@ -218,7 +218,6 @@ ORDER BY u.first_visit_date, e.variation;
     except Exception as e:
         print(f"🚨 执行失败: {e}")
 
-# 如果需要运行，可调用函数，例如：
 if __name__ == "__main__":
-    tag = "backend"  # 根据实际标签修改
+    tag = "trans_pt"
     insert_experiment_data_to_wide_table(tag)

@@ -15,8 +15,8 @@ def get_db_connection():
     return engine
 
 
-def insert_subscribe_metrics_summary(tag):
-    print(f"开始获取实验汇总数据，标签: {tag}")
+def insert_daily_subscribe_metrics(tag):
+    print(f"开始获取每日实验订阅数据，标签: {tag}")
     from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
     experiment_data = get_experiment_details_by_tag(tag)
     if not experiment_data:
@@ -29,11 +29,12 @@ def insert_subscribe_metrics_summary(tag):
     print(f"实验名称: {experiment_name}, 时间: {start_time} - {end_time}")
 
     engine = get_db_connection()
-    table_name = f"tbl_report_subscribe_metrics_summary_{tag}"
+    table_name = f"tbl_report_subscribe_metrics_daily_{tag}"
 
     create_table_query = f"""
     DROP TABLE IF EXISTS {table_name};
     CREATE TABLE IF NOT EXISTS {table_name} (
+        dt DATE,
         variation VARCHAR(255),
         experiment_user_count INT,
         new_subscribe_users INT,
@@ -54,22 +55,20 @@ def insert_subscribe_metrics_summary(tag):
         INSERT INTO {table_name}
         WITH 
         exp AS (
-          SELECT DISTINCT user_id, variation_id
+          SELECT DISTINCT user_id, variation_id, event_date AS dt
           FROM flow_wide_info.tbl_wide_experiment_assignment_hi
           WHERE experiment_id = '{experiment_name}'
             AND event_date BETWEEN '{start_time}' AND '{end_time}'
         ),
         experiment_users AS (
-          SELECT variation_id, COUNT(DISTINCT user_id) AS experiment_user_count
+          SELECT dt, variation_id, COUNT(DISTINCT user_id) AS experiment_user_count
           FROM exp
-          GROUP BY variation_id
+          GROUP BY dt, variation_id
         ),
         platform_subscribe AS (
-          SELECT g.user_id AS user_id, g.sub_date AS sub_date, 
-                 g.expiration_date AS expiration_date,
-                 'android' AS platform, 
-                 g.notification_type AS notification_type, 
-                 e.variation_id
+          SELECT g.user_id AS user_id, DATE(g.sub_date) AS dt, g.sub_date, 
+                 g.expiration_date, 'android' AS platform, 
+                 g.notification_type, e.variation_id
           FROM flow_wide_info.tbl_wide_business_subscribe_google_detail g
           JOIN exp e ON g.user_id = e.user_id
           WHERE g.notification_type IN (2, 4)
@@ -77,61 +76,60 @@ def insert_subscribe_metrics_summary(tag):
 
           UNION ALL
 
-          SELECT a.user_id AS user_id, a.sub_date AS sub_date,
-                 a.expiration_date AS expiration_date,
-                 'ios' AS platform, 
-                 a.notification_type AS notification_type, 
-                 e.variation_id
+          SELECT a.user_id AS user_id, DATE(a.sub_date) AS dt, a.sub_date,
+                 a.expiration_date, 'ios' AS platform, 
+                 a.notification_type, e.variation_id
           FROM flow_wide_info.tbl_wide_business_subscribe_apple_detail a
           JOIN exp e ON a.user_id = e.user_id
           WHERE a.notification_type IN ('SUBSCRIBED', 'DID_RENEW', 'DID_CHANGE_RENEWAL_PREF')
             AND a.sub_date BETWEEN '{start_time}' AND '{end_time} 23:59:59'
         ),
         revenue_table AS (
-          SELECT user_id, revenue
+          SELECT user_id, revenue, event_date AS dt
           FROM flow_event_info.tbl_app_event_subscribe
           WHERE event_date BETWEEN '{start_time}' AND '{end_time}'
         ),
         platform_with_revenue AS (
-          SELECT ps.variation_id, ps.user_id, ps.notification_type, ps.expiration_date, COALESCE(r.revenue, 0) AS revenue
+          SELECT ps.dt, ps.variation_id, ps.user_id, ps.notification_type, ps.expiration_date, COALESCE(r.revenue, 0) AS revenue
           FROM platform_subscribe ps
-          LEFT JOIN revenue_table r ON ps.user_id = r.user_id
+          LEFT JOIN revenue_table r ON ps.user_id = r.user_id AND ps.dt = r.dt
         ),
         new_subscribe_events AS (
-          SELECT variation_id, COUNT(*) AS new_subscribe_events
+          SELECT dt, variation_id, COUNT(*) AS new_subscribe_events
           FROM platform_with_revenue
           WHERE notification_type IN (4, 'SUBSCRIBED')
-          GROUP BY variation_id
+          GROUP BY dt, variation_id
         ),
         new_subscribe_users AS (
-          SELECT variation_id, COUNT(DISTINCT user_id) AS new_subscribe_users
+          SELECT dt, variation_id, COUNT(DISTINCT user_id) AS new_subscribe_users
           FROM platform_with_revenue
           WHERE notification_type IN (4, 'SUBSCRIBED')
-          GROUP BY variation_id
+          GROUP BY dt, variation_id
         ),
         active_users AS (
-          SELECT variation_id, COUNT(DISTINCT user_id) AS active_user_count
+          SELECT dt, variation_id, COUNT(DISTINCT user_id) AS active_user_count
           FROM exp
-          GROUP BY variation_id
+          GROUP BY dt, variation_id
         ),
         subscribe_revenue AS (
-          SELECT variation_id, SUM(revenue) AS total_subscribe_revenue
+          SELECT dt, variation_id, SUM(revenue) AS total_subscribe_revenue
           FROM platform_with_revenue
-          GROUP BY variation_id
+          GROUP BY dt, variation_id
         ),
         renewal AS (
-          SELECT variation_id, COUNT(DISTINCT user_id) AS renewal_count
+          SELECT dt, variation_id, COUNT(DISTINCT user_id) AS renewal_count
           FROM platform_with_revenue
           WHERE notification_type IN (2, 'DID_RENEW')
-          GROUP BY variation_id
+          GROUP BY dt, variation_id
         ),
         due_subscriptions AS (
-          SELECT variation_id, COUNT(DISTINCT user_id) AS due_count
+          SELECT dt, variation_id, COUNT(DISTINCT user_id) AS due_count
           FROM platform_with_revenue
           WHERE expiration_date BETWEEN '{start_time}' AND '{end_time}'
-          GROUP BY variation_id
+          GROUP BY dt, variation_id
         )
         SELECT
+          a.dt,
           a.variation_id,
           a.experiment_user_count,
           COALESCE(nu.new_subscribe_users, 0) AS new_subscribe_users,
@@ -142,17 +140,20 @@ def insert_subscribe_metrics_summary(tag):
                ELSE ROUND(COALESCE(r.renewal_count, 0) / d.due_count, 4) END AS renewal_rate,
           '{tag}' AS experiment_tag
         FROM experiment_users a
-        LEFT JOIN new_subscribe_users nu ON a.variation_id = nu.variation_id
-        LEFT JOIN new_subscribe_events ne ON a.variation_id = ne.variation_id
-        LEFT JOIN subscribe_revenue sr ON a.variation_id = sr.variation_id
-        LEFT JOIN active_users au ON a.variation_id = au.variation_id
-        LEFT JOIN renewal r ON a.variation_id = r.variation_id
-        LEFT JOIN due_subscriptions d ON a.variation_id = d.variation_id;
+        LEFT JOIN new_subscribe_users nu ON a.dt = nu.dt AND a.variation_id = nu.variation_id
+        LEFT JOIN new_subscribe_events ne ON a.dt = ne.dt AND a.variation_id = ne.variation_id
+        LEFT JOIN subscribe_revenue sr ON a.dt = sr.dt AND a.variation_id = sr.variation_id
+        LEFT JOIN active_users au ON a.dt = au.dt AND a.variation_id = au.variation_id
+        LEFT JOIN renewal r ON a.dt = r.dt AND a.variation_id = r.variation_id
+        LEFT JOIN due_subscriptions d ON a.dt = d.dt AND a.variation_id = d.variation_id;
         """
 
         conn.execute(text(insert_query))
-        print(f"汇总订阅指标数据已写入表：{table_name}")
+        print(f"✅ 每日订阅指标数据已写入表：{table_name}")
 
+
+def main(tag):
+    insert_daily_subscribe_metrics(tag)
 
 if __name__ == "__main__":
-    insert_subscribe_metrics_summary("trans_es")
+    main("trans_pt")

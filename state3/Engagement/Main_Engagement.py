@@ -1,5 +1,5 @@
 import time
-from state2.Engagement.Events import (
+from state3.Engagement.Events import (
     Chat,
     Continue,
     Follow,
@@ -8,7 +8,7 @@ from state2.Engagement.Events import (
     Regen,
     Time_spent,
     View,
-    Conversation_ended
+    Conversation_reset
 )
 
 
@@ -26,13 +26,13 @@ def main(tag):
     print(f"\n🎬 【主流程启动】标签：{tag}\n")
 
     events = [
-        # ("Chat", Chat.main),
+        ("Chat", Chat.main),
         ("Conversation", New_Conversation.main),
         ("Message", Message.main),
         ("Regen", Regen.main),
         ("TimeSpent", Time_spent.main),
         ("View", View.main),
-        ("ConversationEnded", Conversation_ended.main),
+        ("ConversationEnded", Conversation_reset.main),
         ("Continue", Continue.main),
         ("Follow", Follow.main)
     ]
@@ -44,5 +44,5 @@ def main(tag):
 
 
 if __name__ == "__main__":
-    tag = "backend"  # 未来可以从外部传入或读取配置
+    tag = "recommendation_mobile"  # 未来可以从外部传入或读取配置
     main(tag)

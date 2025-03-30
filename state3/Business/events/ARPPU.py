@@ -145,5 +145,12 @@ def insert_arppu_daily_data(tag):
     return table_name
 
 
+# 在 ARPPU.py 文件里加上这个函数封装
+
+def main(tag):
+    insert_arppu_daily_data(tag)
+
+
+# 只在单独运行 ARPPU.py 时才执行
 if __name__ == "__main__":
-    insert_arppu_daily_data("trans_es")
+    main("trans_es")

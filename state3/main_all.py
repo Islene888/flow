@@ -15,16 +15,16 @@ fetch_and_save_experiment_data()
 
 # 2. 获取所有标签
 tags = get_all_tags_from_db()
-
-# 3. 遍历所有标签并执行后续操作
-for tag in tags:
-    print(f"Processing tag: {tag}")
-
-    # 根据标签获取实验详细信息
-    get_experiment_details_by_tag(tag)
-
-    # 将实验数据插入宽表
-    insert_experiment_data_to_wide_table(tag)
-
-    # 生成并保存留存报告
-    retention_report_table_ETL.main(tag)
+#
+# # 3. 遍历所有标签并执行后续操作
+# for tag in tags:
+#     print(f"Processing tag: {tag}")
+#
+#     # 根据标签获取实验详细信息
+#     get_experiment_details_by_tag(tag)
+#
+#     # 将实验数据插入宽表
+#     insert_experiment_data_to_wide_table(tag)
+#
+#     # 生成并保存留存报告
+#     retention_report_table_ETL.main(tag)
