@@ -104,7 +104,7 @@ def fetch_and_save_experiment_data():
                     "experiment_name": "chat-skip-translation",
                     "tags": "trans_pt",
                     "phase_start_time": datetime(2025,3,22,0,00,00),
-                    "phase_end_time": datetime(2025,3,30,12,00,00),
+                    "phase_end_time": datetime(2025,3,31,12,00,00),
                     "number_of_variations": 2,
                     "control_group_key": 0
                 })
@@ -112,7 +112,7 @@ def fetch_and_save_experiment_data():
                     "experiment_name": "chat-skip-translation-es",
                     "tags": "trans_es",
                     "phase_start_time": datetime(2025,3,22,0,00,00),
-                    "phase_end_time": datetime(2025,3,30,12,00,00),
+                    "phase_end_time": datetime(2025,3,31,12,00,00),
                     "number_of_variations": 2,
                     "control_group_key": 0
                 })
@@ -120,7 +120,7 @@ def fetch_and_save_experiment_data():
                     "experiment_name": "app_sensitive_image_exp",
                     "tags": "recommendation_mobile",
                     "phase_start_time": datetime(2025, 3, 13, 0, 00, 00),
-                    "phase_end_time": datetime(2025, 3, 30, 12, 00, 00),
+                    "phase_end_time": datetime(2025, 3, 31, 12, 00, 00),
                     "number_of_variations": 5,
                     "control_group_key": 0
                 })

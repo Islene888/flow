@@ -3,7 +3,6 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
 from datetime import datetime, timedelta
-
 from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -13,7 +12,7 @@ def get_db_connection():
     password = urllib.parse.quote_plus("flowgpt@2024.com")
     DATABASE_URL = f"mysql+pymysql://bigdata:{password}@3.135.224.186:9030/flow_ab_test?charset=utf8mb4"
     engine = create_engine(DATABASE_URL)
-    print("\u2705 数据库连接已建立。")
+    print("✅ 数据库连接已建立。")
     return engine
 
 
@@ -56,70 +55,72 @@ def insert_ad_data(tag):
 
         current_date = start_time
         while current_date <= end_time:
-            print(f"🗕️ 处理日期：{current_date}")
-
+            print(f"📆 处理日期：{current_date}")
             for batch_index in range(10):
                 print(f"📌 执行第 {batch_index + 1}/10 批次 SQL 插入...")
 
+                # 主查询 SQL（不包含 SET）
                 batch_insert_query = f"""
-                SET query_mem_limit=2147483648;
-
+                WITH 
+                exp_all AS (
+                    SELECT DISTINCT user_id, variation_id
+                    FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+                    WHERE experiment_id = '{experiment_name}'
+                    AND event_date BETWEEN '{start_time}' AND '{end_time}'
+                ),
+                total AS (
+                    SELECT variation_id, COUNT(DISTINCT user_id) AS total_active_users
+                    FROM exp_all
+                    GROUP BY variation_id
+                ),
+                exp AS (
+                    SELECT user_id, variation_id
+                    FROM exp_all
+                    WHERE MOD(CRC32(user_id), 10) = {batch_index}
+                ),
+                ad_revenue AS (
+                    SELECT e.variation_id, SUM(p.ad_revenue) AS total_ad_revenue
+                    FROM flow_event_info.tbl_app_event_ads_impression p
+                    JOIN exp e ON p.user_id = e.user_id
+                    WHERE p.event_date = '{current_date}'
+                    GROUP BY e.variation_id
+                ),
+                ad_exposure AS (
+                    SELECT e.variation_id,
+                           COUNT(*) AS ad_exposure_count,
+                           COUNT(DISTINCT p.user_id) AS ad_exposure_users
+                    FROM flow_event_info.tbl_app_event_ads_impression p
+                    JOIN exp e ON p.user_id = e.user_id
+                    WHERE p.event_date = '{current_date}'
+                    GROUP BY e.variation_id
+                )
                 INSERT INTO {table_name} (
                     variation, total_active_users, total_ad_revenue, ad_arpu,
                     ad_exposure_users, ad_exposure_rate, ad_exposure_count, eCPM,
                     ad_exposure_per_user, experiment_tag
                 )
-                WITH 
-                exp AS (
-                  SELECT DISTINCT user_id, variation_id
-                  FROM flow_wide_info.tbl_wide_experiment_assignment_hi
-                  WHERE experiment_id = '{experiment_name}'
-                    AND event_date = '{current_date}'
-                    AND MOD(crc32(user_id), 10) = {batch_index}
-                ),
-                total AS (
-                  SELECT variation_id, COUNT(DISTINCT user_id) AS total_active_users
-                  FROM exp
-                  GROUP BY variation_id
-                ),
-                ad_revenue AS (
-                  SELECT e.variation_id, SUM(p.ad_revenue) AS total_ad_revenue
-                  FROM flow_event_info.tbl_app_event_ads_impression p
-                  JOIN exp e ON p.user_id = e.user_id
-                  WHERE p.event_date = '{current_date}'
-                  GROUP BY e.variation_id
-                ),
-                ad_exposure AS (
-                  SELECT e.variation_id,
-                         COUNT(*) AS ad_exposure_count,
-                         COUNT(DISTINCT p.user_id) AS ad_exposure_users
-                  FROM flow_event_info.tbl_app_event_ads_impression p
-                  JOIN exp e ON p.user_id = e.user_id
-                  WHERE p.event_date = '{current_date}'
-                  GROUP BY e.variation_id
-                )
                 SELECT 
-                  t.variation_id,
-                  t.total_active_users,
-                  ar.total_ad_revenue,
-                  ROUND(ar.total_ad_revenue / t.total_active_users, 4) AS ad_arpu,
-                  ae.ad_exposure_users,
-                  ROUND(ae.ad_exposure_users / t.total_active_users, 4) AS ad_exposure_rate,
-                  ae.ad_exposure_count,
-                  ROUND((ar.total_ad_revenue / NULLIF(ae.ad_exposure_count, 0)) * 1000, 4) AS eCPM,
-                  ROUND(ae.ad_exposure_count / NULLIF(ae.ad_exposure_users, 0), 4) AS ad_exposure_per_user,
-                  '{tag}' AS experiment_tag
+                    t.variation_id,
+                    t.total_active_users,
+                    ar.total_ad_revenue,
+                    ROUND(ar.total_ad_revenue / t.total_active_users, 4) AS ad_arpu,
+                    ae.ad_exposure_users,
+                    ROUND(ae.ad_exposure_users / t.total_active_users, 4) AS ad_exposure_rate,
+                    ae.ad_exposure_count,
+                    ROUND((ar.total_ad_revenue / NULLIF(ae.ad_exposure_count, 0)) * 1000, 4) AS eCPM,
+                    ROUND(ae.ad_exposure_count / NULLIF(ae.ad_exposure_users, 0), 4) AS ad_exposure_per_user,
+                    '{tag}' AS experiment_tag
                 FROM total t
                 LEFT JOIN ad_revenue ar ON t.variation_id = ar.variation_id
                 LEFT JOIN ad_exposure ae ON t.variation_id = ae.variation_id;
                 """
 
                 try:
+                    conn.execute(text("SET query_mem_limit=2147483648"))
                     conn.execute(text(batch_insert_query))
                     print(f"✅ 日期 {current_date} - 批次 {batch_index + 1}/10 插入成功。")
                 except Exception as e:
                     print(f"❌ 日期 {current_date} - 批次 {batch_index + 1}/10 插入失败，错误：{e}")
-
             current_date += timedelta(days=1)
 
     print(f"✅ 所有数据插入完成，目标表：{table_name}")
@@ -133,11 +134,11 @@ def overwrite_ad_table_with_summary(tag):
     summary_query = f"""
     SELECT 
         variation,
-        SUM(total_active_users) AS total_active_users,
+        MAX(total_active_users) AS total_active_users,
         SUM(total_ad_revenue) AS total_ad_revenue,
-        ROUND(SUM(total_ad_revenue) / NULLIF(SUM(total_active_users), 0), 4) AS ad_arpu,
+        ROUND(SUM(total_ad_revenue) / NULLIF(MAX(total_active_users), 0), 4) AS ad_arpu,
         SUM(ad_exposure_users) AS ad_exposure_users,
-        ROUND(SUM(ad_exposure_users) / NULLIF(SUM(total_active_users), 0), 4) AS ad_exposure_rate,
+        ROUND(SUM(ad_exposure_users) / NULLIF(MAX(total_active_users), 0), 4) AS ad_exposure_rate,
         SUM(ad_exposure_count) AS ad_exposure_count,
         ROUND(SUM(total_ad_revenue) / NULLIF(SUM(ad_exposure_count), 0) * 1000, 4) AS eCPM,
         ROUND(SUM(ad_exposure_count) / NULLIF(SUM(ad_exposure_users), 0), 4) AS ad_exposure_per_user,

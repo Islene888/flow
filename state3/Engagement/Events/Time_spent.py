@@ -68,13 +68,18 @@ def insert_time_spent_data(tag):
         WHERE s.event_date BETWEEN '{start_day_str}' AND '{end_day_str}'
         GROUP BY s.user_id, s.event_date
     ),
-    experiment_var AS (
+   experiment_var AS (
+    SELECT user_id, variation_id
+    FROM (
         SELECT
             user_id,
-            MIN(variation_id) AS variation_id
+            variation_id,
+            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp_assigned) AS rn
         FROM flow_wide_info.tbl_wide_experiment_assignment_hi
         WHERE experiment_id = '{experiment_name}'
-        GROUP BY user_id
+          AND timestamp_assigned BETWEEN '{start_time_str}' AND '{end_time_str}'
+    ) t
+    WHERE rn = 1
     ),
     joined_result AS (
         SELECT

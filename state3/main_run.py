@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore", category=SAWarning)
 fetch_and_save_experiment_data()
 #
 # tag = 'chat_0310'  # 定义实验标签
-tag = 'recommendation_mobile'  # 定义实验标签
+tag = 'trans_pt'  # 定义实验标签
 # # 留存计算
 Main_Retention.main(tag)
 #

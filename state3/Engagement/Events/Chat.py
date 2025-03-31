@@ -93,7 +93,7 @@ def main(tag):
                 GROUP BY user_id
             ) uv ON a.user_id = uv.user_id
             WHERE a.event_date = '{current_date}'
-              AND a.Method != 'regenerate'
+              AND (a.Method != 'regenerate' or a.Method IS NULL)
             GROUP BY a.event_date, uv.variation_id
             ORDER BY a.event_date, uv.variation_id;
             """
@@ -111,6 +111,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         tag = sys.argv[1]
     else:
-        tag = "trans_es"
+        tag = "trans_pt"
         print(f"⚠️ 未指定实验标签，默认使用：{tag}")
     main(tag)

@@ -104,14 +104,21 @@ def main(tag):
     """
 
     result_df = pd.read_sql(final_query, engine)
-    print("🚀 最终每日 Edit 数据:")
-    print(result_df)
+
+    print("🚀 最终每日 Edit 数据（按天按组返回）：")
+    grouped = result_df.groupby(['日期', '实验分组'])
+
+    for (event_date, variation), group in grouped:
+        row = group.iloc[0]
+        print(f"📅 日期: {event_date} ｜ 分组: {variation}")
+        print(f"   ✏️ 编辑事件数: {row['编辑事件数']} ｜ 活跃编辑用户数: {row['活跃编辑用户数']} ｜ 人均编辑次数: {row['人均编辑次数']}")
+        print("-" * 50)
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         tag = sys.argv[1]
     else:
-        tag = "trans_pt"
+        tag = "trans_es"
         print(f"⚠️ 未指定实验标签，默认使用：{tag}")
     main(tag)

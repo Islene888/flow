@@ -1,3 +1,4 @@
+
 import urllib.parse
 import pandas as pd
 import numpy as np
@@ -16,7 +17,7 @@ def get_db_connection():
 
 # ============= 读取每日订阅宽表数据 =============
 def read_subscribe_data(tag, engine):
-    table_name = f"tbl_report_subscribe_metrics_daily_{tag}"
+    table_name = f"tbl_report_subscribe_metrics_{tag}"
     try:
         df = pd.read_sql(f"SELECT * FROM {table_name}", engine)
         return df[df["variation"].notnull()].copy()
@@ -30,11 +31,6 @@ def bayesian_subscribe_analysis(df, tag, n_samples=10000):
     if df.empty:
         print("❌ 没有有效数据可用于分析")
         return None
-
-    # 排除首日与末日影响
-    unique_dates = sorted(df["dt"].unique())
-    if len(unique_dates) > 2:
-        df = df[~df["dt"].isin([unique_dates[0], unique_dates[-1]])]
 
     grouped = df.groupby("variation", as_index=False).agg({
         "experiment_user_count": "sum",
@@ -81,6 +77,7 @@ def bayesian_subscribe_analysis(df, tag, n_samples=10000):
         })
 
     return pd.DataFrame(results)
+
 
 # ============= 写入分析结果 =============
 def write_results(df_result, tag, engine):
