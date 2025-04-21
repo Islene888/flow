@@ -54,7 +54,8 @@ def insert_recharge_data(tag):
         print(f"目标表 {table_name} 数据已清空。")
 
         insert_query = f"""
-        INSERT INTO {table_name} (variation, total_active_users, total_recharge_revenue, recharge_ARPU, recharge_conversion_rate, recharge_frequency, experiment_tag)
+             INSERT INTO {table_name}
+(variation, total_active_users, total_recharge_revenue, recharge_ARPU, recharge_conversion_rate, recharge_frequency, experiment_tag)
         WITH 
         exp AS (
           SELECT DISTINCT
@@ -160,4 +161,4 @@ def main(tag):
 
 
 if __name__ == "__main__":
-    main("trans_es")
+    main("chat_0416")

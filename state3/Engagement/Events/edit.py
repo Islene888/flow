@@ -5,7 +5,7 @@ import warnings
 from datetime import datetime, timedelta
 import sys
 
-from state2.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
+from state3.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -80,6 +80,7 @@ def main(tag):
             FROM flow_event_info.tbl_app_event_chat_send a
             JOIN flow_wide_info.tbl_wide_experiment_assignment_hi b
               ON a.user_id = b.user_id
+              and a.event_date = b.event_date
             WHERE b.experiment_id = '{experiment_name}'
               AND a.event_date = '{current_date}'
               AND a.Method = 'edit'
@@ -119,6 +120,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         tag = sys.argv[1]
     else:
-        tag = "trans_es"
+        tag = "chat_0416"  # 未来可以从外部传入或读取配置
         print(f"⚠️ 未指定实验标签，默认使用：{tag}")
     main(tag)

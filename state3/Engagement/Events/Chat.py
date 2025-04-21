@@ -19,7 +19,6 @@ def get_db_connection():
 def main(tag):
     print(f"🚀 开始获取实验数据，标签：{tag}")
 
-    # 获取实验信息
     experiment_data = get_experiment_details_by_tag(tag)
     if not experiment_data:
         print(f"⚠️ 没有找到符合标签 '{tag}' 的实验数据！")
@@ -29,88 +28,92 @@ def main(tag):
     start_time = experiment_data['phase_start_time']
     end_time   = experiment_data['phase_end_time']
 
-    start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-    end_time_str   = end_time.strftime("%Y-%m-%d %H:%M:%S")
-
-    # 仅用于外层过滤的首日和末日
     start_day_str = start_time.strftime("%Y-%m-%d")
     end_day_str   = end_time.strftime("%Y-%m-%d")
 
-    print(f"📝 实验名称：{experiment_name}")
-    print(f"⏰ 计算时间范围：{start_time_str} ~ {end_time_str}")
-    print(f"   首日：{start_day_str}，末日：{end_day_str}")
-
     engine = get_db_connection()
-    table_name = f"tbl_report_chat_{tag}"
+    table_name = f"tbl_report_chat_depth_{tag}"
 
-    # 建表（如表存在则覆盖）
     drop_table_query = f"DROP TABLE IF EXISTS {table_name};"
     create_table_query = f"""
     CREATE TABLE {table_name} (
         event_date VARCHAR(255),
         variation VARCHAR(255),
-        total_chat INT,
-        unique_chat_users INT,
-        chat_ratio DOUBLE,
+        total_chat_rounds BIGINT,
+        unique_users INT,
+        chat_bots INT,
+        chat_depth_bot DOUBLE,
+        chat_depth_user DOUBLE,
+        chat_depth_per_user_per_bot DOUBLE,
         experiment_name VARCHAR(255)
     );
     """
-    # 执行建表操作
+
     with engine.connect() as conn:
         conn.execute(text("SET query_timeout = 30000;"))
         conn.execute(text(drop_table_query))
         conn.execute(text(create_table_query))
         print(f"✅ 表 {table_name} 已创建。")
 
-    # 将开始和结束日期转换为 datetime 对象，并计算中间日期（不包含首日和末日）
-    start_date = datetime.strptime(start_day_str, "%Y-%m-%d")
-    end_date = datetime.strptime(end_day_str, "%Y-%m-%d")
-    delta_days = (end_date - start_date).days
+        start_date = datetime.strptime(start_day_str, "%Y-%m-%d")
+        end_date = datetime.strptime(end_day_str, "%Y-%m-%d")
+        delta_days = (end_date - start_date).days
 
-    # 遍历首日之后到末日前的每一天，分批插入
-    with engine.connect() as conn:
-        conn.execute(text("SET query_timeout = 30000;"))
-        for d in range(1, delta_days):
+        for d in range(1, delta_days):  # 排除首尾
             current_date = (start_date + timedelta(days=d)).strftime("%Y-%m-%d")
 
-            batch_insert_query = f"""
-            INSERT INTO {table_name} (event_date, variation, total_chat, unique_chat_users, chat_ratio, experiment_name)
+            insert_sql = f"""
+            INSERT INTO {table_name} (
+                event_date, variation, total_chat_rounds, unique_users, chat_bots,
+                chat_depth_bot, chat_depth_user, chat_depth_per_user_per_bot, experiment_name
+            )
+            WITH dedup_assignment AS (
+                SELECT user_id, event_date, variation_id
+                FROM (
+                    SELECT *,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY user_id, event_date, experiment_id
+                            ORDER BY variation_id
+                        ) AS rn
+                    FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+                    WHERE experiment_id = '{experiment_name}'
+                ) t
+                WHERE rn = 1
+            )
             SELECT
-                a.event_date,
-                uv.variation_id AS variation,
-                COUNT(DISTINCT a.event_id) AS total_chat,
-                COUNT(DISTINCT a.user_id) AS unique_chat_users,
-                CASE
-                    WHEN COUNT(DISTINCT a.user_id) = 0 THEN 0
-                    ELSE ROUND(COUNT(DISTINCT a.event_id) * 1.0 / COUNT(DISTINCT a.user_id), 4)
-                END AS chat_ratio,
+                '{current_date}' AS event_date,
+                a.variation_id AS variation,
+                COUNT(cs.event_id) AS total_chat_rounds,
+                COUNT(DISTINCT cs.user_id) AS unique_users,
+                COUNT(DISTINCT cs.prompt_id) AS chat_bots,
+                ROUND(COUNT(cs.event_id) * 1.0 / COUNT(DISTINCT cs.prompt_id), 2) AS chat_depth_bot,
+                ROUND(COUNT(cs.event_id) * 1.0 / COUNT(DISTINCT cs.user_id), 2) AS chat_depth_user,
+                ROUND(COUNT(cs.event_id) * 1.0 / (COUNT(DISTINCT cs.user_id) * COUNT(DISTINCT cs.prompt_id)), 4) AS chat_depth_per_user_per_bot,
                 '{experiment_name}' AS experiment_name
-            FROM flow_event_info.tbl_app_event_chat_send a
-            JOIN (
-                SELECT user_id, MIN(variation_id) AS variation_id
-                FROM flow_wide_info.tbl_wide_experiment_assignment_hi
-                WHERE experiment_id = '{experiment_name}'
-                GROUP BY user_id
-            ) uv ON a.user_id = uv.user_id
-            WHERE a.event_date = '{current_date}'
-              AND (a.Method != 'regenerate' or a.Method IS NULL)
-            GROUP BY a.event_date, uv.variation_id
-            ORDER BY a.event_date, uv.variation_id;
+            FROM flow_event_info.tbl_app_event_chat_send cs
+            JOIN dedup_assignment a
+              ON cs.user_id = a.user_id AND cs.event_date = a.event_date
+            WHERE cs.event_date = '{current_date}'
+            GROUP BY a.variation_id;
             """
-
             print(f"👉 正在插入日期：{current_date}")
-            conn.execute(text(batch_insert_query))
-        print(f"✅ 所有批次数据已插入到表 {table_name} 中。")
+            try:
+                conn.execute(text(insert_sql))
+            except Exception as e:
+                print(f"❌ 插入 {current_date} 失败：{e}")
+                print(f"🔍 SQL:\n{insert_sql}")
 
-    # 查询结果
+        print(f"✅ 所有聊天深度数据已插入表 {table_name}。")
+
     result_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY event_date, variation;", engine)
-    print("🚀 最终表数据:")
+    result_df.fillna(0, inplace=True)
+    print("🚀 聊天深度预览：")
     print(result_df)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         tag = sys.argv[1]
     else:
-        tag = "trans_pt"
+        tag = "chat_0416"
         print(f"⚠️ 未指定实验标签，默认使用：{tag}")
     main(tag)

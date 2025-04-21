@@ -8,7 +8,7 @@ from state3.Engagement.Events import (
     Regen,
     Time_spent,
     View,
-    Conversation_reset
+    Conversation_reset, click_chat_ratio, show_click_ratio, edit
 )
 
 
@@ -32,8 +32,11 @@ def main(tag):
         ("Regen", Regen.main),
         ("TimeSpent", Time_spent.main),
         ("View", View.main),
+        ("edit", edit.main),
         ("ConversationEnded", Conversation_reset.main),
         ("Continue", Continue.main),
+        ("click_chat_ratio", click_chat_ratio.main),
+        ("show_click_ratio", show_click_ratio.main),
         ("Follow", Follow.main)
     ]
 

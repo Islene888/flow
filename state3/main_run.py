@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore", category=SAWarning)
 fetch_and_save_experiment_data()
 #
 # tag = 'chat_0310'  # 定义实验标签
-tag = 'trans_pt'  # 定义实验标签
+tag = 'chat_0416'  # 定义实验标签
 # # 留存计算
 Main_Retention.main(tag)
 #
@@ -31,8 +31,8 @@ recharge.main(tag)
 recharge_summury.main(tag)
 #
 # # 广告计算
-advertisement.main(tag)
-advertisement_sum.main(tag)
+# advertisement.main(tag)
+# advertisement_sum.main(tag)
 #
 # # 订阅计算
 subscribe.main(tag)

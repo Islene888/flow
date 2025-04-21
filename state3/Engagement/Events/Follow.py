@@ -2,7 +2,7 @@ import urllib.parse
 import pandas as pd
 from sqlalchemy import create_engine, text
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime
 import sys
 
 from state3.growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
@@ -30,13 +30,11 @@ def main(tag):
 
     start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
     end_time_str   = end_time.strftime("%Y-%m-%d %H:%M:%S")
-
     start_day = start_time.strftime("%Y-%m-%d")
     end_day   = end_time.strftime("%Y-%m-%d")
 
     print(f"📝 实验名称：{experiment_name}")
-    print(f"⏰ 计算时间范围：{start_time_str} ~ {end_time_str}")
-    print(f"   首日：{start_day}，末日：{end_day}")
+    print(f"⏰ 实验时间范围：{start_time_str} ~ {end_time_str}")
 
     engine = get_db_connection()
     table_name = f"tbl_report_follow_{tag}"
@@ -54,7 +52,15 @@ def main(tag):
 
     truncate_query = f"TRUNCATE TABLE {table_name};"
 
-    # -- 这里使用子查询来实现先计算再过滤
+    # 判断是否过滤首尾日
+    filter_days = (end_time - start_time).days > 2
+    date_filter_clause = (
+        f"WHERE raw.event_date > '{start_day}' AND raw.event_date < '{end_day}'"
+        if filter_days else ""
+    )
+    if not filter_days:
+        print("⚠️ 实验时间不足三天，未过滤首尾日。")
+
     insert_query = f"""
     INSERT INTO {table_name} (event_date, variation, total_follow, unique_follow_users, follow_ratio, experiment_name)
     SELECT 
@@ -65,8 +71,8 @@ def main(tag):
         raw.follow_ratio,
         '{experiment_name}' AS experiment_name
     FROM (
-        SELECT /*+ SET_VAR(query_timeout = 30000) */
-            a.event_date,
+        SELECT
+            DATE(f.ingest_timestamp) AS event_date,
             a.variation_id AS variation,
             COUNT(DISTINCT f.event_id) AS total_follow,
             COUNT(DISTINCT f.user_id) AS unique_follow_users,
@@ -75,14 +81,17 @@ def main(tag):
                 ELSE ROUND(COUNT(DISTINCT f.event_id) * 1.0 / COUNT(DISTINCT f.user_id), 4)
             END AS follow_ratio
         FROM flow_event_info.tbl_app_event_bot_follow f
-        JOIN flow_wide_info.tbl_wide_experiment_assignment_hi a
-            ON f.user_id = a.user_id
-        WHERE a.experiment_id = '{experiment_name}'
-          AND f.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
-        GROUP BY a.event_date, a.variation_id
-        ORDER BY a.event_date, a.variation_id
+        JOIN (
+            SELECT user_id, variation_id
+            FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+            WHERE experiment_id = '{experiment_name}'
+            GROUP BY user_id, variation_id
+        ) a ON f.user_id = a.user_id
+        WHERE f.ingest_timestamp BETWEEN '{start_time_str}' AND '{end_time_str}'
+          AND f.user_id NOT LIKE 'test%'  -- 示例：排除测试账号
+        GROUP BY DATE(f.ingest_timestamp), a.variation_id
     ) AS raw
-    WHERE raw.event_date NOT IN ('{start_day}', '{end_day}');
+    {date_filter_clause};
     """
 
     with engine.connect() as conn:
@@ -90,19 +99,17 @@ def main(tag):
         conn.execute(text(create_table_query))
         conn.execute(text(truncate_query))
         print(f"✅ 表 {table_name} 已创建并清空。")
-
         conn.execute(text(insert_query))
-        print(f"✅ 已插入过滤后的统计结果到表 {table_name} 中。")
+        print(f"✅ 已写入跟随行为统计数据至表 {table_name}。")
 
-    # -- 查看结果
     result_df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY event_date, variation;", engine)
-    print("🚀 最终表数据（不含首尾天）:")
+    print("🚀 最终结果预览：")
     print(result_df)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         tag = sys.argv[1]
     else:
-        tag = "recommendation_mobile"
+        tag = "trans_es"
         print(f"⚠️ 未指定实验标签，默认使用：{tag}")
     main(tag)

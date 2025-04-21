@@ -101,27 +101,27 @@ def fetch_and_save_experiment_data():
                         print(f"No phases available for experiment: {experiment_name}")
 
                 experiments_data.append({
-                    "experiment_name": "chat-skip-translation",
+                    "experiment_name": "mobile-chat-vanilla-0416",
+                    "tags": "chat_0416",
+                    "phase_start_time": datetime(2025,4,16,0,00,00),
+                    "phase_end_time": datetime(2025,4,21,12,00,00),
+                    "number_of_variations": 2,
+                    "control_group_key": 0
+                })
+                experiments_data.append({
+                    "experiment_name": "chat-skip-translation-pt-new",
                     "tags": "trans_pt",
-                    "phase_start_time": datetime(2025,3,22,0,00,00),
-                    "phase_end_time": datetime(2025,3,31,12,00,00),
+                    "phase_start_time": datetime(2025,4,11,0,00,00),
+                    "phase_end_time": datetime(2025,4,16,12,00,00),
                     "number_of_variations": 2,
                     "control_group_key": 0
                 })
                 experiments_data.append({
-                    "experiment_name": "chat-skip-translation-es",
-                    "tags": "trans_es",
-                    "phase_start_time": datetime(2025,3,22,0,00,00),
-                    "phase_end_time": datetime(2025,3,31,12,00,00),
-                    "number_of_variations": 2,
-                    "control_group_key": 0
-                })
-                experiments_data.append({
-                    "experiment_name": "app_sensitive_image_exp",
+                    "experiment_name": "app_rs_rank_v4",
                     "tags": "recommendation_mobile",
-                    "phase_start_time": datetime(2025, 3, 13, 0, 00, 00),
-                    "phase_end_time": datetime(2025, 3, 31, 12, 00, 00),
-                    "number_of_variations": 5,
+                    "phase_start_time": datetime(2025, 4, 1, 0, 00, 00),
+                    "phase_end_time": datetime(2025, 4, 7, 12, 00, 00),
+                    "number_of_variations": 2,
                     "control_group_key": 0
                 })
                 # 去重：使用 (experiment_name, tags) 组合作为唯一标识

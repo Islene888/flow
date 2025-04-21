@@ -119,6 +119,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         tag = sys.argv[1]
     else:
-        tag = "recommendation_mobile"
+        tag = "chat_0409"
         print(f"⚠️ 未指定实验标签，默认使用：{tag}")
     main(tag)
